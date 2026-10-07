@@ -5,12 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
+import { bin } from "./helpers.ts";
 
 const execFileAsync = promisify(execFile);
-const bin = fileURLToPath(new URL("../bin/agentcfg.js", import.meta.url));
 
-async function commandExists(command) {
+async function commandExists(command: string) {
   try {
     await execFileAsync("which", [command]);
     return true;
@@ -45,8 +44,10 @@ test(
 
     await execFileAsync(process.execPath, [bin, "sync", "--home", home, "--manifest", manifest]);
 
+    // CLAUDE_CONFIG_DIR=<home> makes Claude Code read <home>/.claude.json,
+    // the file sync writes for a --home of <home>.
     const claude = await execFileAsync("claude", ["mcp", "list"], {
-      env: { ...process.env, CLAUDE_CONFIG_DIR: join(home, ".claude") },
+      env: { ...process.env, CLAUDE_CONFIG_DIR: home },
     });
     assert.match(claude.stdout, /demo:/);
 

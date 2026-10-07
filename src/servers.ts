@@ -1,0 +1,234 @@
+import { basename } from "node:path";
+import { isRecord } from "./files.ts";
+import type { Agent, Server, ServerMap } from "./types.ts";
+
+// Reads one server entry from any JSON-based config: Cursor, Claude Code,
+// Claude Desktop, VS Code, Windsurf, Gemini, and plugin .mcp.json files.
+export function fromJsonServer(raw: unknown): Server | null {
+  if (!isRecord(raw)) return null;
+  const enabled = raw.disabled === true || raw.enabled === false ? false : undefined;
+  const url = firstString(raw.url, raw.serverUrl, raw.httpUrl);
+  if (url) {
+    return compact({
+      transport: raw.type === "sse" ? "sse" : "http",
+      url,
+      headers: stringRecord(raw.headers),
+      enabled,
+    });
+  }
+  if (typeof raw.command === "string") {
+    return compact({
+      transport: "stdio",
+      command: raw.command,
+      args: stringArray(raw.args),
+      env: stringRecord(raw.env),
+      cwd: typeof raw.cwd === "string" ? raw.cwd : undefined,
+      enabled,
+    });
+  }
+  return null;
+}
+
+export function fromJsonServers(raw: unknown): ServerMap {
+  const servers: ServerMap = {};
+  if (!isRecord(raw)) return servers;
+  for (const [name, entry] of Object.entries(raw)) {
+    const server = fromJsonServer(entry);
+    if (server) servers[name] = server;
+  }
+  return servers;
+}
+
+export function toCursor(server: Server): Record<string, unknown> {
+  if (server.transport === "stdio") {
+    return compact({ command: server.command, args: server.args, env: server.env });
+  }
+  return compact({ url: server.url, headers: server.headers });
+}
+
+export function toClaude(server: Server): Record<string, unknown> {
+  if (server.transport === "stdio") {
+    return compact({ command: server.command, args: server.args, env: server.env });
+  }
+  return compact({ type: server.transport, url: server.url, headers: server.headers });
+}
+
+// The part of a server an agent's file format can hold. Diffing on anything
+// more would report drift that a sync can never fix.
+export function forAgent(server: Server, agent: Agent): Server {
+  if (agent === "codex") {
+    return compact({
+      transport: server.transport === "sse" ? "http" : server.transport,
+      url: server.url,
+      headers: server.transport === "stdio" ? undefined : server.headers,
+      command: server.command,
+      args: server.args,
+      env: server.transport === "stdio" ? server.env : undefined,
+      cwd: server.cwd,
+      bearerTokenEnvVar: server.bearerTokenEnvVar,
+      startupTimeoutSec: server.startupTimeoutSec,
+      enabled: server.enabled === false ? false : undefined,
+    });
+  }
+  const sse = agent === "claude" && server.transport === "sse";
+  return compact({
+    transport: server.transport === "stdio" ? "stdio" : sse ? "sse" : "http",
+    url: server.url,
+    headers: server.transport === "stdio" ? undefined : server.headers,
+    command: server.command,
+    args: server.args,
+    env: server.transport === "stdio" ? server.env : undefined,
+  });
+}
+
+export function signature(server: Server): string {
+  return JSON.stringify({
+    transport: server.transport,
+    url: server.url ?? null,
+    command: server.command ?? null,
+    args: server.args ?? [],
+    env: sortKeys(server.env),
+    headers: sortKeys(server.headers),
+    bearerTokenEnvVar: server.bearerTokenEnvVar ?? null,
+    enabled: server.enabled !== false,
+    cwd: server.cwd ?? null,
+    startupTimeoutSec: server.startupTimeoutSec ?? null,
+  });
+}
+
+export function sameServer(left: Server, right: Server): boolean {
+  return signature(left) === signature(right);
+}
+
+// A key that says "this is the same MCP server" even when two configs spell
+// it differently: tracking query params dropped, `npx -y pkg@latest` and
+// `pnpm dlx pkg` folded together.
+export function identity(server: Server): string {
+  if (server.url) return normalizeUrl(server.url);
+  const tokens = [server.command ?? "", ...(server.args ?? [])];
+  const runner = basename(tokens[0] ?? "");
+  let rest: string[] | null = null;
+  if (["npx", "bunx", "pnpx"].includes(runner)) rest = tokens.slice(1);
+  else if (["pnpm", "yarn", "bun"].includes(runner) && ["dlx", "x"].includes(tokens[1] ?? "")) rest = tokens.slice(2);
+  else if (runner === "uvx") rest = tokens.slice(1);
+  if (rest) {
+    const [pkg = "", ...after] = dropLeadingFlags(rest);
+    return ["pkg:" + stripVersion(pkg), ...after].join(" ").trim();
+  }
+  return [runner, ...tokens.slice(1)].join(" ").trim();
+}
+
+export function normalizeUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    for (const key of [...url.searchParams.keys()]) {
+      if (/^utm_/i.test(key)) url.searchParams.delete(key);
+    }
+    url.hash = "";
+    url.username = "";
+    url.password = "";
+    const path = url.pathname.replace(/\/+$/, "");
+    const query = url.searchParams.toString();
+    return `${url.protocol}//${url.host.toLowerCase()}${path}${query ? `?${query}` : ""}`;
+  } catch {
+    return raw;
+  }
+}
+
+export function secretFields(server: Server): string[] {
+  const fields: string[] = [];
+  for (const [key, value] of Object.entries(server.env ?? {})) {
+    if (isLiteralSecret(value)) fields.push(`env.${key}`);
+  }
+  for (const [key, value] of Object.entries(server.headers ?? {})) {
+    if (isLiteralSecret(value)) fields.push(`headers.${key}`);
+  }
+  return fields;
+}
+
+export function isLiteralSecret(value: unknown): boolean {
+  if (typeof value !== "string" || value.length === 0) return false;
+  return !/^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(value) && !/^\$[A-Za-z_][A-Za-z0-9_]*$/.test(value);
+}
+
+const SECRET_NAME = /key|token|secret|passw|auth|bearer|cookie|sig/i;
+export const REDACTED = "<redacted>";
+
+// Safe to print or write to a report: env and header values, credential-like
+// query params and arguments are masked unless they reference a variable.
+export function redact(server: Server): Server {
+  const mask = (record?: Record<string, string>) =>
+    record &&
+    Object.fromEntries(Object.entries(record).map(([key, value]) => [key, isLiteralSecret(value) ? REDACTED : value]));
+  return compact({
+    ...server,
+    url: server.url && redactUrl(server.url),
+    env: mask(server.env),
+    headers: mask(server.headers),
+    args: server.args && redactArgs(server.args),
+  });
+}
+
+function redactUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    if (url.username || url.password) {
+      url.username = REDACTED;
+      url.password = "";
+    }
+    for (const key of [...url.searchParams.keys()]) {
+      if (SECRET_NAME.test(key)) url.searchParams.set(key, REDACTED);
+    }
+    return url.toString().replaceAll(encodeURIComponent(REDACTED), REDACTED);
+  } catch {
+    return raw;
+  }
+}
+
+function redactArgs(args: string[]): string[] {
+  return args.map((arg, index) => {
+    const inline = arg.match(/^(--?[\w-]+)=(.*)$/);
+    if (inline && SECRET_NAME.test(inline[1] ?? "") && isLiteralSecret(inline[2])) return `${inline[1]}=${REDACTED}`;
+    const previous = args[index - 1];
+    if (previous && /^--?[\w-]+$/.test(previous) && SECRET_NAME.test(previous) && isLiteralSecret(arg)) return REDACTED;
+    if (/^(sk|pk|rk|ghp|gho|github_pat|xox[abp]|glpat)[-_][A-Za-z0-9_-]{8,}/.test(arg)) return REDACTED;
+    return arg;
+  });
+}
+
+function dropLeadingFlags(tokens: string[]): string[] {
+  let index = 0;
+  while (index < tokens.length && tokens[index]?.startsWith("-")) index += 1;
+  return tokens.slice(index);
+}
+
+function stripVersion(pkg: string): string {
+  const at = pkg.lastIndexOf("@");
+  return at > 0 ? pkg.slice(0, at) : pkg.replace(/==.*$/, "");
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  return values.find((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+function stringArray(value: unknown): string[] | undefined {
+  return Array.isArray(value) ? value.map(String) : undefined;
+}
+
+function stringRecord(value: unknown): Record<string, string> | undefined {
+  if (!isRecord(value)) return undefined;
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, String(entry)]));
+}
+
+function sortKeys(record?: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(record ?? {}).sort(([a], [b]) => a.localeCompare(b)));
+}
+
+export function compact<const T extends Record<string, unknown>>(value: T): T {
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      ([, entry]) =>
+        entry != null && !(Array.isArray(entry) && entry.length === 0) && !(isRecord(entry) && Object.keys(entry).length === 0),
+    ),
+  ) as T;
+}
