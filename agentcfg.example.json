@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "servers": {
+    "docs": {
+      "transport": "http",
+      "url": "https://example.com/mcp",
+      "agents": ["cursor", "claude", "codex"]
+    },
+    "local-tools": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "some-mcp-server"],
+      "env": {
+        "API_TOKEN": "${API_TOKEN}"
+      }
+    }
+  }
+}

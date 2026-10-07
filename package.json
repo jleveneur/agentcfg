@@ -1,0 +1,25 @@
+{
+  "name": "agentcfg",
+  "version": "0.1.0",
+  "description": "One MCP manifest for Cursor, Claude Code, and Codex.",
+  "type": "module",
+  "bin": {
+    "agentcfg": "./bin/agentcfg.js"
+  },
+  "scripts": {
+    "test": "node --test",
+    "test:unit": "node --test test/agentcfg.test.js",
+    "test:live": "node --test test/live.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "files": [
+    "bin",
+    "src",
+    "agentcfg.example.json",
+    "README.md",
+    "LICENSE"
+  ]
+}
