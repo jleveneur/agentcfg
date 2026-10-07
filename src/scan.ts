@@ -7,7 +7,8 @@ import { type CursorInstalls, type CursorState, readCursorState } from "./cursor
 import { errorMessage, fileExists, isRecord, readJson, readText } from "./files.ts"
 import { type Context, discoverProjects, type Locations, locations } from "./paths.ts"
 import { fromJsonServers, identity, redact } from "./servers.ts"
-import type { Server, ServerMap } from "./types.ts"
+import { collectSkills, type PluginSkills, type SkillsReport } from "./skills.ts"
+import { DEFAULT_AGENTS, type Server, type ServerMap } from "./types.ts"
 
 export type Scope = "user" | "local" | "project" | "plugin"
 
@@ -48,6 +49,7 @@ export interface LoadedOnly {
 export interface ScanResult {
   findings: Finding[]
   loadedOnly: LoadedOnly[]
+  skills: SkillsReport
   projects: string[]
   warnings: string[]
 }
@@ -197,6 +199,7 @@ export async function scan(options: ScanOptions): Promise<ScanResult> {
   }
 
   // Plugins.
+  const pluginSkills: PluginSkills[] = []
   await safely("claude plugins", async () => {
     const installed = await readJson(paths.claudePlugins)
     const settings = await readJson(paths.claudeSettings)
@@ -207,6 +210,12 @@ export async function scan(options: ScanOptions): Promise<ScanResult> {
       for (const install of Array.isArray(installs) ? installs : []) {
         if (!isRecord(install) || typeof install.installPath !== "string") continue
         const project = typeof install.projectPath === "string" ? install.projectPath : undefined
+        pluginSkills.push({
+          agent: "claude",
+          plugin: key,
+          dir: install.installPath,
+          active: enabledPlugins[key] === true
+        })
         for (const { file, servers } of await pluginServers(
           install.installPath,
           ".claude-plugin"
@@ -235,6 +244,7 @@ export async function scan(options: ScanOptions): Promise<ScanResult> {
       const dir = await newestChild(join(paths.codexPlugins, marketplace, name))
       if (!dir) continue
       const enabled = !(isRecord(config) && config.enabled === false)
+      pluginSkills.push({ agent: "codex", plugin: key, dir, active: enabled })
       for (const { file, servers } of await pluginServers(dir, ".codex-plugin")) {
         add({ agent: "codex", scope: "plugin", plugin: key, file, enabled }, servers)
       }
@@ -249,6 +259,12 @@ export async function scan(options: ScanOptions): Promise<ScanResult> {
     const known = new Set(plugins.flatMap((plugin) => plugin.ids))
     for (const plugin of plugins) {
       const installedIn = cursorInstallsFor(plugin, cursorInstalls, cursorProjectPlugins)
+      pluginSkills.push({
+        agent: "cursor",
+        plugin: plugin.name,
+        dir: plugin.dir,
+        active: installedIn ? installedIn.length > 0 : true
+      })
       for (const { file, servers } of await pluginServers(plugin.dir, ".cursor-plugin")) {
         add(
           {
@@ -321,8 +337,27 @@ export async function scan(options: ScanOptions): Promise<ScanResult> {
     })
   }
 
+  const manifestAgents = new Map<string, string[]>()
+  for (const project of projects) {
+    const manifest = await readJsonOrEmpty(join(project, "agentcfg.json"))
+    if (Array.isArray(manifest.agents)) {
+      manifestAgents.set(
+        project,
+        manifest.agents.filter((agent) => typeof agent === "string")
+      )
+    }
+  }
+  const skills = await collectSkills({
+    home: resolve(options.ctx.home),
+    paths,
+    projects,
+    agentsFor: (project) => (project && manifestAgents.get(project)) || [...DEFAULT_AGENTS],
+    plugins: pluginSkills
+  })
+
   return {
     findings,
+    skills,
     loadedOnly: loadedOnly.toSorted((a, b) => a.id.localeCompare(b.id)),
     projects,
     warnings

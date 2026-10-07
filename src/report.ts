@@ -3,6 +3,7 @@ import { basename } from "node:path"
 import type { DiffRow } from "./commands.ts"
 import { tildify } from "./paths.ts"
 import { type Finding, groupFindings, type LoadedOnly, type ScanResult } from "./scan.ts"
+import type { SkillConflict, SkillGap, SkillLocation, SkillsReport } from "./skills.ts"
 import { type State, STATUS_AGENTS, type StatusAgent, type StatusReport } from "./status.ts"
 import type { Server } from "./types.ts"
 
@@ -67,6 +68,8 @@ export function formatScan(
     ])
     lines.push(...table(rows).map((line) => `  ${line}`))
   }
+
+  lines.push(...formatSkills(result.skills, home))
 
   const live = result.loadedOnly.filter((entry) => !entry.stale)
   const stale = result.loadedOnly.filter((entry) => entry.stale)
@@ -234,4 +237,110 @@ function statusHints(status: StatusReport): string[] {
     )
   }
   return hints
+}
+
+function countSkills(list: SkillLocation[]): number {
+  return list.reduce((sum, location) => sum + location.skills.length, 0)
+}
+
+function formatSkills(report: SkillsReport, home: string): string[] {
+  const folders = report.locations.filter(
+    (location) => location.scope !== "plugin" && location.skills.length
+  )
+  const plugins = report.locations.filter((location) => location.scope === "plugin")
+  const builtIn = report.builtIn.reduce((sum, entry) => sum + entry.count, 0)
+  if (!folders.length && !plugins.length && !builtIn) return []
+
+  const lines = [
+    "",
+    `Skills: ${countSkills(folders)} in ${folders.length} folder${folders.length === 1 ? "" : "s"}, ${countSkills(plugins)} from plugins, ${builtIn} built in${builtIn ? ` (${report.builtIn.map((entry) => `${entry.agent} ${entry.count}`).join(", ")})` : ""}.`
+  ]
+  const rows = folders.map((location) => [
+    skillPlace(location, home) +
+      (location.linkedTo ? ` → ${posix(tildify(location.linkedTo, home))}` : ""),
+    String(location.skills.length),
+    `read by ${location.readBy.join(", ")}`
+  ])
+  lines.push(...table(rows).map((line) => `  ${line}`))
+  if (plugins.length) {
+    const byPlugin = plugins
+      .toSorted((a, b) => b.skills.length - a.skills.length)
+      .map(
+        (location) => `${location.plugin} ${location.skills.length} (${location.readBy.join(", ")})`
+      )
+    lines.push(`  plugins: ${byPlugin.join(", ")}`)
+  }
+
+  // One line per name and place set, with every agent that sees the copies.
+  const conflicts = new Map<string, { agents: string[]; conflict: SkillConflict }>()
+  for (const conflict of report.conflicts) {
+    const key = `${conflict.project ?? ""}|${conflict.name}|${conflict.places.join("|")}`
+    const entry = conflicts.get(key) ?? { agents: [], conflict }
+    entry.agents.push(conflict.agent)
+    conflicts.set(key, entry)
+  }
+  if (conflicts.size) {
+    lines.push("", "Skills an agent loads more than once:")
+    const conflictRows = [...conflicts.values()].map(({ agents, conflict }) => [
+      conflict.project ? basename(conflict.project) : "~",
+      conflict.name,
+      `${conflict.places.length} ${conflict.sameContent ? "identical copies" : "different versions"} for ${agents.join(", ")}`,
+      conflict.places
+        .map((place) =>
+          conflict.project && place.startsWith(`${conflict.project}/`)
+            ? posix(place.slice(conflict.project.length + 1))
+            : posix(tildify(place, home))
+        )
+        .join(", ")
+    ])
+    lines.push(...table(conflictRows).map((line) => `  ${line}`))
+  }
+
+  if (report.gaps.length) {
+    lines.push("", "Skills an agent cannot see:")
+    // Agents missing the same skills in the same folder share a line.
+    const merged = new Map<string, { agents: string[]; gap: SkillGap }>()
+    for (const gap of report.gaps) {
+      const key = `${gap.location.dir}|${gap.missing.join("|")}|${gapHint(gap)}`
+      const entry = merged.get(key) ?? { agents: [], gap }
+      entry.agents.push(gap.agent)
+      merged.set(key, entry)
+    }
+    const gapRows = [...merged.values()].map(({ agents, gap }) => [
+      agents.join(", "),
+      skillPlace(gap.location, home),
+      skillList(gap.missing),
+      gapHint(gap)
+    ])
+    lines.push(...table(gapRows).map((line) => `  ${line}`))
+  }
+  return lines
+}
+
+function skillList(names: string[]): string {
+  const shown = names.length > 3 ? [...names.slice(0, 2), `+${names.length - 2} more`] : names
+  return `${names.length} skill${names.length === 1 ? "" : "s"}: ${shown.join(", ")}`
+}
+
+function skillPlace(location: SkillLocation, home: string): string {
+  if (location.scope === "plugin") return `plugin ${location.plugin ?? ""}`
+  if (!location.project) return posix(tildify(location.dir, home))
+  return posix(`${basename(location.project)}/${location.dir.slice(location.project.length + 1)}`)
+}
+
+// Paths read the same on every system in the report.
+export function posix(path: string): string {
+  return path.replaceAll("\\", "/")
+}
+
+// Claude Code only lacks .agents/skills, which agentcfg link fixes. Anything
+// else belongs in .agents/skills, the folder the other agents share.
+function gapHint(gap: SkillGap): string {
+  const shared = /[\\/]\.agents[\\/]skills$/.test(gap.location.dir)
+  if (gap.agent === "claude" && shared) {
+    return gap.location.project
+      ? `run agentcfg link in ${basename(gap.location.project)}`
+      : "run agentcfg link --global"
+  }
+  return "move to .agents/skills"
 }

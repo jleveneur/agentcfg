@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0
+
+- `scan` lists skills: every skill folder each agent reads, user and project, the skills of active plugins, and the ones agents ship with. It flags a skill an agent loads twice from different folders, and the skills an agent cannot see, with what fixes it.
+- `agentcfg link` lets Claude Code see the skills in `.agents/skills`, the folder Codex, Cursor, Gemini CLI, and VS Code share: one `.claude/skills` link in a project, or one link per skill with `--global`, leaving Claude Code's own skills and its synced folder alone.
+
 ## 0.2.0
 
 - `scan` finds projects through Cursor's list of opened folders, so it no longer needs `--projects` to see projects that only Cursor knows. Temporary folders that other tools open Cursor in are left out.

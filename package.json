@@ -1,8 +1,9 @@
 {
   "name": "@jleveneur/agentcfg",
   "version": "0.2.0",
-  "description": "One MCP config for Cursor, Claude Code, Codex, VS Code, Gemini CLI, and Windsurf, plus a scan of every MCP server on the machine.",
+  "description": "One MCP config for Cursor, Claude Code, Codex, VS Code, and Gemini CLI, shared skills, and a scan of every MCP server and skill on the machine.",
   "keywords": [
+    "agent-skills",
     "ai-agents",
     "claude-code",
     "cli",
@@ -11,6 +12,7 @@
     "gemini-cli",
     "mcp",
     "model-context-protocol",
+    "skills",
     "vscode",
     "windsurf"
   ],
@@ -46,7 +48,7 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "test": "node --test test/*.test.ts",
-    "test:unit": "node --test test/agentcfg.test.ts test/scan.test.ts test/status.test.ts",
+    "test:unit": "node --test test/agentcfg.test.ts test/scan.test.ts test/skills.test.ts test/status.test.ts",
     "test:live": "node --test test/live.test.ts",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:unit",
     "prepare": "node scripts/install-hooks.ts",

@@ -47,6 +47,29 @@ It covers user and project files for every agent above plus Claude Desktop, Wind
 
 Projects come from `--projects DIR`, the current directory, and the projects Claude Code, Codex, and Cursor already know, so a plain `agentcfg scan` usually finds them all. Cursor keeps a snapshot of the servers it loaded in each workspace until you open that workspace again; entries left there by servers you removed since are counted apart, and `--all` lists them. Secrets are masked. `--json` prints the full report.
 
+## Share skills between agents
+
+Skills already share one format, a folder with a `SKILL.md`, but each agent looks in its own places:
+
+| Agent       | Project                                                               | User                                                        |
+| ----------- | --------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Claude Code | `.claude/skills`                                                      | `~/.claude/skills`                                          |
+| Codex       | `.agents/skills`                                                      | `~/.agents/skills`                                          |
+| Gemini CLI  | `.agents/skills`, `.gemini/skills`                                    | `~/.agents/skills`, `~/.gemini/skills`                      |
+| VS Code     | `.agents/skills`, `.claude/skills`, `.github/skills`                  | `~/.agents/skills`, `~/.claude/skills`, `~/.copilot/skills` |
+| Cursor      | `.agents/skills`, `.cursor/skills`, `.claude/skills`, `.codex/skills` | the same under `~`                                          |
+
+So keep skills in `.agents/skills`, which every agent but Claude Code reads, and let `link` cover Claude Code:
+
+```bash
+agentcfg link              # in a project: .claude/skills → ../.agents/skills, commit it
+agentcfg link --global     # ~/.claude/skills/<skill> → ~/.agents/skills/<skill>, one link each
+```
+
+In a project with no `.claude/skills`, one folder link covers every skill, now and later. Where `.claude/skills` already holds skills, and always in the home directory, where Claude Code keeps the skills it syncs from claude.ai, each shared skill gets its own link and nothing already there is touched. Run it again after adding a skill there. `--dry-run` shows what it would do. On Windows, links are directory junctions.
+
+`scan` lists the skills in every folder and plugin, the skills an agent loads twice from different folders, and the ones an agent cannot see, with the command or move that fixes it.
+
 ## Keep two manifests
 
 Like git with `~/.gitconfig` and `.git/config`, agentcfg has a global manifest and one per project. Both have the same shape.

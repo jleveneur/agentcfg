@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs"
-import { resolve } from "node:path"
+import { basename, relative, resolve } from "node:path"
 
 import {
   addServer,
@@ -10,8 +10,9 @@ import {
   removeServer,
   syncConfigs
 } from "./commands.ts"
+import { linkSkills } from "./link.ts"
 import { createContext, tildify } from "./paths.ts"
-import { formatDiff, formatScan, formatStatus } from "./report.ts"
+import { formatDiff, formatScan, formatStatus, posix } from "./report.ts"
 import { groupFindings, scan } from "./scan.ts"
 import { collectStatus } from "./status.ts"
 
@@ -134,6 +135,35 @@ export async function run(argv: string[], io: IO = defaultIO): Promise<number> {
       io.stdout(
         `Removed ${name} from ${tildify(result.scope.manifest, ctx.home)}. Run "${syncHint(global)} --prune" to remove it from the agent files.`
       )
+      return 0
+    }
+
+    case "link": {
+      const result = await linkSkills(options)
+      const where = result.global ? "~" : basename(result.root)
+      const show = (path: string) =>
+        posix(result.global ? tildify(path, ctx.home) : relative(result.root, path))
+      const verb = options.dryRun ? "Would link" : "Linked"
+      const lines = result.actions.map((action) => {
+        if (action.kind === "create-dir")
+          return `  ${options.dryRun ? "would create" : "created"} ${show(action.path)}`
+        if (action.kind === "link-dir" || action.kind === "link-skill") {
+          return `  ${verb.toLowerCase()} ${show(action.path)} → ${posix(action.target ?? "")}`
+        }
+        if (action.kind === "remove-link") {
+          return `  ${options.dryRun ? "would remove" : "removed"} ${show(action.path)}: ${action.reason ?? ""}`
+        }
+        return `  kept ${show(action.path)}: ${action.reason ?? ""}`
+      })
+      io.stdout([`Claude Code skills in ${where}:`, ...lines].join("\n"))
+      const changed = result.actions.some((action) => action.kind !== "keep")
+      if (changed && !options.dryRun) {
+        io.stdout(
+          result.global
+            ? `Claude Code now sees the ${result.skills.length} skills in ~/.agents/skills. Run agentcfg link --global again after adding one.`
+            : `Claude Code now sees the skills in .agents/skills. Commit .claude/skills so the rest of the team gets them too.`
+        )
+      }
       return 0
     }
 
@@ -294,6 +324,7 @@ Usage:
   agentcfg add    NAME URL [--header 'KEY: VALUE'] [--transport sse] [--agent LIST] [--global] [--force]
   agentcfg add    NAME [--env 'KEY=VALUE'] [--agent LIST] [--global] [--force] -- COMMAND ARGS...
   agentcfg remove NAME [--global]
+  agentcfg link   [--global] [--dry-run]
   agentcfg import [--global] [--agent LIST] [--prefer AGENT] [--include-managed] [--force]
   agentcfg diff   [--global] [--agent LIST]
   agentcfg sync   [--global] [--agent LIST] [--prune] [--dry-run]
@@ -316,6 +347,9 @@ init     creates an empty manifest. --agent picks the agents it writes to.
 add      adds a server to the manifest, creating ./agentcfg.json if needed.
          Write secrets as \${NAME}, in single quotes so the shell keeps them.
 remove   removes a server from the manifest.
+link     lets Claude Code see the skills in .agents/skills, the folder Codex,
+         Cursor, Gemini CLI, and VS Code read: one .claude/skills link in a
+         project, or one link per skill in ~/.claude/skills with --global.
 import   reads the agent files of the scope into its manifest.
 sync     writes the manifest into the agent files. Every changed file is first
          copied to ~/.local/state/agentcfg/backups.
