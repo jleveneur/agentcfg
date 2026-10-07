@@ -1,6 +1,6 @@
 {
   "name": "@jleveneur/agentcfg",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "One MCP config for Cursor, Claude Code, Codex, VS Code, and Gemini CLI, shared skills, and a scan of every MCP server and skill on the machine.",
   "keywords": [
     "agent-skills",
