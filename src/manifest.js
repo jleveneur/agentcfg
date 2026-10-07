@@ -5,23 +5,6 @@ export function emptyManifest() {
   return { version: 1, servers: {}, projects: {} };
 }
 
-export function canonicalUrl(url) {
-  try {
-    const parsed = new URL(url);
-    if (parsed.hostname === "mcp.reui.io") return "https://mcp.reui.io";
-  } catch {
-    return url;
-  }
-  return url;
-}
-
-export function canonicalize(server) {
-  if (!server?.url) return server;
-  const url = canonicalUrl(server.url);
-  if (url === server.url) return server;
-  return { ...server, url };
-}
-
 export async function readManifest(file) {
   const text = await readFile(file, "utf8");
   const data = JSON.parse(text);
@@ -86,5 +69,5 @@ export function signature(server) {
 }
 
 export function sameServer(left, right) {
-  return signature(canonicalize(left)) === signature(canonicalize(right));
+  return signature(left) === signature(right);
 }

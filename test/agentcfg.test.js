@@ -159,45 +159,44 @@ test("prune removes extra user servers and keeps managed codex servers", async (
   assert.match(codex, /mcp_servers\.node_repl/);
 });
 
-test("import keeps reui global and project servers in their projects", async () => {
+test("import keeps a global server global and project servers in their projects", async () => {
   const root = await mkdtemp(join(tmpdir(), "agentcfg-scope-"));
   const home = join(root, "home");
   const projects = join(root, "projects");
-  const app = join(projects, "hydromag");
-  const dimension = join(projects, "dimension");
+  const app = join(projects, "web");
+  const api = join(projects, "api");
   await mkdir(join(home, ".cursor"), { recursive: true });
   await mkdir(join(home, ".codex"), { recursive: true });
   await mkdir(join(app, ".cursor"), { recursive: true });
-  await mkdir(join(dimension, ".cursor"), { recursive: true });
-  await mkdir(join(dimension), { recursive: true });
+  await mkdir(join(api, ".cursor"), { recursive: true });
   await writeFile(
     join(home, ".cursor", "mcp.json"),
-    JSON.stringify({ mcpServers: { reui: { url: "https://mcp.reui.io" } } }),
+    JSON.stringify({ mcpServers: { docs: { url: "https://example.com/mcp" } } }),
   );
-  await writeFile(join(home, ".codex", "config.toml"), `[mcp_servers.reui]\nurl = "https://mcp.reui.io/api/mcp"\n`);
+  await writeFile(join(home, ".codex", "config.toml"), `[mcp_servers.docs]\nurl = "https://example.com/mcp"\n`);
   await writeFile(
     join(app, ".cursor", "mcp.json"),
     JSON.stringify({
       mcpServers: {
-        reui: { url: "https://mcp.reui.io/api/mcp" },
-        "next-devtools": { command: "pnpm", args: ["dlx", "next-devtools-mcp@latest"] },
+        docs: { url: "https://example.com/mcp" },
+        "local-tools": { command: "npx", args: ["-y", "some-mcp-server"] },
       },
     }),
   );
   await writeFile(
-    join(dimension, ".mcp.json"),
+    join(api, ".mcp.json"),
     JSON.stringify({
       mcpServers: {
-        linear: { type: "http", url: "https://mcp.linear.app/mcp" },
+        notes: { type: "http", url: "https://notes.example/mcp" },
       },
     }),
   );
   await writeFile(
-    join(dimension, ".cursor", "mcp.json"),
+    join(api, ".cursor", "mcp.json"),
     JSON.stringify({
       mcpServers: {
-        shadcn: { command: "npx", args: ["-y", "shadcn@latest", "mcp"] },
-        linear: { url: "https://mcp.linear.app/mcp" },
+        search: { command: "npx", args: ["-y", "search-mcp"] },
+        notes: { url: "https://notes.example/mcp" },
       },
     }),
   );
@@ -205,28 +204,27 @@ test("import keeps reui global and project servers in their projects", async () 
   const manifest = join(root, "agentcfg.json");
   const imported = await run(["import", "--home", home, "--projects", projects, "--manifest", manifest]);
   assert.equal(imported.code, 0, imported.stderr);
-  assert.match(imported.stderr, /hydromag: reui matches the global server/);
+  assert.match(imported.stderr, /web: docs matches the global server/);
   const written = JSON.parse(await readFile(manifest, "utf8"));
-  assert.equal(written.servers.reui.url, "https://mcp.reui.io");
-  assert.equal(written.servers.reui.scope, "global");
-  assert.deepEqual(written.servers.reui.agents.sort(), ["codex", "cursor"]);
-  assert.equal(written.projects[app].reui, undefined);
-  assert.equal(written.projects[app]["next-devtools"].command, "pnpm");
-  assert.equal(written.projects[dimension].shadcn.command, "npx");
-  assert.deepEqual(written.projects[dimension].linear.agents.sort(), ["claude", "cursor"]);
+  assert.equal(written.servers.docs.url, "https://example.com/mcp");
+  assert.equal(written.servers.docs.scope, "global");
+  assert.deepEqual(written.servers.docs.agents.sort(), ["codex", "cursor"]);
+  assert.equal(written.projects[app].docs, undefined);
+  assert.equal(written.projects[app]["local-tools"].command, "npx");
+  assert.equal(written.projects[api].search.command, "npx");
+  assert.deepEqual(written.projects[api].notes.agents.sort(), ["claude", "cursor"]);
 
   const synced = await run(["sync", "--prune", "--home", home, "--manifest", manifest]);
   assert.equal(synced.code, 0, synced.stderr);
   const globalCursor = JSON.parse(await readFile(join(home, ".cursor", "mcp.json"), "utf8"));
-  assert.equal(globalCursor.mcpServers.reui.url, "https://mcp.reui.io");
-  assert.equal(globalCursor.mcpServers["next-devtools"], undefined);
+  assert.equal(globalCursor.mcpServers.docs.url, "https://example.com/mcp");
+  assert.equal(globalCursor.mcpServers["local-tools"], undefined);
   const codex = await readFile(join(home, ".codex", "config.toml"), "utf8");
-  assert.match(codex, /url = "https:\/\/mcp\.reui\.io"\n/);
-  assert.doesNotMatch(codex, /api\/mcp/);
+  assert.match(codex, /url = "https:\/\/example\.com\/mcp"\n/);
   const appCursor = JSON.parse(await readFile(join(app, ".cursor", "mcp.json"), "utf8"));
-  assert.equal(appCursor.mcpServers.reui, undefined);
-  assert.equal(appCursor.mcpServers["next-devtools"].command, "pnpm");
-  const dimensionClaude = JSON.parse(await readFile(join(dimension, ".mcp.json"), "utf8"));
-  assert.equal(dimensionClaude.mcpServers.linear.url, "https://mcp.linear.app/mcp");
-  assert.equal(dimensionClaude.mcpServers.shadcn, undefined);
+  assert.equal(appCursor.mcpServers.docs, undefined);
+  assert.equal(appCursor.mcpServers["local-tools"].command, "npx");
+  const apiClaude = JSON.parse(await readFile(join(api, ".mcp.json"), "utf8"));
+  assert.equal(apiClaude.mcpServers.notes.url, "https://notes.example/mcp");
+  assert.equal(apiClaude.mcpServers.search, undefined);
 });

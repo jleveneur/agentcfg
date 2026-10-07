@@ -38,13 +38,13 @@ node bin/agentcfg.js diff
 node bin/agentcfg.js sync --prune
 ```
 
-`import` reads the global configs and every project directory in `~/Developments`. Pass `--projects` to scan somewhere else, or `--no-projects` to stay global. A server that already exists globally, including `reui` at `https://mcp.reui.io/api/mcp`, is kept once as the global server `https://mcp.reui.io`.
+`import` reads the global configs. Pass `--projects DIR` to also read each directory inside `DIR`. A project server that matches a global server of the same name is kept once, as the global server.
 
 `sync` writes each server back to the agents and scope it belongs to. Servers that already exist only inside an agent stay there. `--prune` removes those extras from the files the manifest covers. Servers shipped by the Codex or ChatGPT app are kept either way.
 
 Literal env values and headers are not copied into the manifest. Declare them as `${ENV_NAME}` yourself.
 
-Marketplace plugins (Figma, Linear, and the Claude.ai connectors) are not part of these files, so they stay outside the manifest.
+Marketplace plugins and hosted connectors are not part of these files, so they stay outside the manifest.
 
 ## Requirements
 

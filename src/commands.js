@@ -1,7 +1,7 @@
 import { access } from "node:fs/promises";
 import { basename } from "node:path";
 import { AGENTS, discoverProjects, projectTargets, resolveTargets } from "./paths.js";
-import { agentsFor, canonicalize, readManifest, sameServer, writeManifest } from "./manifest.js";
+import { agentsFor, readManifest, sameServer, writeManifest } from "./manifest.js";
 import { isManagedServer, readAgentServers, secretFields, writeAgentServers } from "./store.js";
 
 export async function importConfigs(options) {
@@ -92,7 +92,7 @@ async function collectBucket(targets, options, warnings, conflicts, label) {
     if (!targets[agent]) continue;
     const servers = await readAgentServers(agent, targets[agent]);
     for (const [name, raw] of Object.entries(servers)) {
-      const server = canonicalize(raw);
+      const server = raw;
       if (!options.includeManaged && isManagedServer(server)) {
         warnings.push(`${label} ${agent}: skipped ${name} (managed by the agent app)`);
         continue;
@@ -123,7 +123,7 @@ async function collectBucket(targets, options, warnings, conflicts, label) {
       ? entries.find((entry) => entry.agent === options.prefer)?.server ?? base
       : base;
     servers[name] = {
-      ...canonicalize(chosen),
+      ...chosen,
       agents: [...new Set(entries.map((entry) => entry.agent))],
     };
   }
@@ -166,7 +166,7 @@ async function syncBucket({ label, servers, targets, options }) {
   for (const agent of selectedAgents(options)) {
     const entries = Object.entries(servers ?? {})
       .filter(([, server]) => agentsFor(server).includes(agent))
-      .map(([name, server]) => ({ name, server: canonicalize(server) }));
+      .map(([name, server]) => ({ name, server }));
     const file = targets[agent];
     const exists = await fileExists(file);
     if (!entries.length && !(options.prune && exists)) continue;

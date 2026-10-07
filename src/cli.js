@@ -1,5 +1,4 @@
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { diffConfigs, importConfigs, syncConfigs } from "./commands.js";
 
 export async function run(argv, io = { stdout: console.log, stderr: console.error }) {
@@ -11,7 +10,7 @@ export async function run(argv, io = { stdout: console.log, stderr: console.erro
 
   const options = {
     home: parsed.home,
-    projects: parsed.noProjects ? null : resolve(parsed.projects ?? join(homedir(), "Developments")),
+    projects: parsed.noProjects || !parsed.projects ? null : resolve(parsed.projects),
     manifest: resolve(parsed.manifest ?? "agentcfg.json"),
     agents: parsed.agents,
     prefer: parsed.prefer,
@@ -119,7 +118,8 @@ Usage:
 
 Global servers are written to the home configs. Project servers are written to
 .cursor/mcp.json, .mcp.json, and .codex/config.toml inside each project.
-import reads ~/Developments unless you pass --projects or --no-projects.
-https://mcp.reui.io/api/mcp is stored as https://mcp.reui.io.
+import reads global configs. Pass --projects DIR to also scan the directories
+inside DIR. A project copy of a server that already exists globally is kept
+once, as the global server.
 `;
 }
