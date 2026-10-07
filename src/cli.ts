@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { addPresets, type CommandOptions, diffConfigs, importConfigs, syncConfigs } from "./commands.ts";
+import { addServer, type CommandOptions, diffConfigs, importConfigs, removeServer, syncConfigs } from "./commands.ts";
 import { createContext, tildify } from "./paths.ts";
 import { formatDiff, formatScan } from "./report.ts";
 import { groupFindings, scan } from "./scan.ts";
@@ -55,12 +55,29 @@ export async function run(argv: string[], io: IO = { stdout: console.log, stderr
   }
 
   if (parsed.command === "add") {
-    const result = await addPresets(options, parsed.positional);
-    if (result.added.length) io.stdout(`Added ${result.added.join(", ")}`);
-    if (result.skipped.length) {
-      io.stderr(`Kept the project's own ${result.skipped.join(", ")}. Pass --force to replace them with the preset.`);
-    }
-    io.stdout(`${would} ${tildify(result.file, ctx.home)}. Run "agentcfg sync" to update the agent files.`);
+    const [name, url, ...extra] = parsed.positional;
+    if (!name) throw new Error("Usage: agentcfg add NAME URL, or agentcfg add NAME -- COMMAND ARGS...");
+    if (extra.length) throw new Error(`Unexpected ${extra.join(" ")}. Put a command and its arguments after --.`);
+    const result = await addServer(options, {
+      name,
+      url,
+      command: parsed.afterDashes,
+      transport: parsed.transport,
+      headers: parsed.headers,
+      env: parsed.env,
+    });
+    const verb = { added: "Added", replaced: "Replaced", unchanged: "Already had" }[result.status];
+    io.stdout(`${verb} ${name} in ${tildify(result.file, ctx.home)}. Run "agentcfg sync${options.global ? " --global" : ""}" to update the agent files.`);
+    return 0;
+  }
+
+  if (parsed.command === "remove") {
+    const [name] = parsed.positional;
+    if (!name) throw new Error("Usage: agentcfg remove NAME");
+    const result = await removeServer(options, name);
+    io.stdout(
+      `Removed ${name} from ${tildify(result.file, ctx.home)}. Run "agentcfg sync --prune${options.global ? " --global" : ""}" to remove it from the agent files.`,
+    );
     return 0;
   }
 
@@ -92,6 +109,10 @@ export async function run(argv: string[], io: IO = { stdout: console.log, stderr
 interface Parsed {
   command?: string;
   positional: string[];
+  afterDashes?: string[];
+  transport?: string;
+  headers: string[];
+  env: string[];
   global: boolean;
   force: boolean;
   project?: string;
@@ -113,6 +134,8 @@ function parseArgs(argv: string[]): Parsed {
   const parsed: Parsed = {
     command: first,
     positional: [],
+    headers: [],
+    env: [],
     global: false,
     force: false,
     includeManaged: false,
@@ -124,7 +147,10 @@ function parseArgs(argv: string[]): Parsed {
   const rest = argv.slice(1);
   for (let index = 0; index < rest.length; index += 1) {
     const token = rest[index] ?? "";
-    if (token === "--help" || token === "-h") parsed.help = true;
+    if (token === "--") {
+      parsed.afterDashes = rest.slice(index + 1);
+      break;
+    } else if (token === "--help" || token === "-h") parsed.help = true;
     else if (token === "--include-managed") parsed.includeManaged = true;
     else if (token === "--prune") parsed.prune = true;
     else if (token === "--dry-run") parsed.dryRun = true;
@@ -136,6 +162,9 @@ function parseArgs(argv: string[]): Parsed {
     else if (token === "--projects") parsed.projects = required(rest, ++index, token);
     else if (token === "--manifest") parsed.manifest = required(rest, ++index, token);
     else if (token === "--prefer") parsed.prefer = required(rest, ++index, token);
+    else if (token === "--transport") parsed.transport = required(rest, ++index, token);
+    else if (token === "--header") parsed.headers.push(required(rest, ++index, token));
+    else if (token === "--env") parsed.env.push(required(rest, ++index, token));
     else if (token === "--agent") {
       parsed.agents = required(rest, ++index, token)
         .split(",")
@@ -161,24 +190,31 @@ function helpText(): string {
 
 Usage:
   agentcfg scan   [--projects DIR] [--json]
-  agentcfg add    <preset>... [--force]
+  agentcfg add    NAME URL [--header 'KEY: VALUE'] [--transport sse] [--agent LIST] [--global] [--force]
+  agentcfg add    NAME [--env 'KEY=VALUE'] [--agent LIST] [--global] [--force] -- COMMAND ARGS...
+  agentcfg remove NAME [--global]
   agentcfg import [--global] [--prefer cursor|claude|codex] [--include-managed] [--force]
-  agentcfg diff   [--global] [--agent cursor,claude,codex]
-  agentcfg sync   [--global] [--agent cursor,claude,codex] [--prune] [--dry-run]
+  agentcfg diff   [--global] [--agent LIST]
+  agentcfg sync   [--global] [--agent LIST] [--prune] [--dry-run]
 
-Two manifests:
-  global   ~/.config/agentcfg/agentcfg.json: servers for every project, and presets
+Two manifests with the same shape:
+  global   ~/.config/agentcfg/agentcfg.json: servers for every project
   project  agentcfg.json at the project root, found from the current directory up
 
 Commands work on the project manifest unless you pass --global.
 
 scan     lists every MCP server on this machine, plugins included. Read-only.
-add      copies presets from the global manifest into the project manifest.
+add      adds a server to the manifest, creating ./agentcfg.json if needed.
+         Write secrets as \${NAME}, in single quotes so the shell keeps them.
+remove   removes a server from the manifest.
 import   reads the agent files of the scope into its manifest.
 sync     writes the manifest into the agent files: ~/.cursor/mcp.json,
          ~/.claude.json, ~/.codex/config.toml for --global; .cursor/mcp.json,
          .mcp.json, .codex/config.toml in the project. Every changed file is
          copied to ~/.local/state/agentcfg/backups first.
+
+--agent LIST is a comma-separated list of cursor, claude, codex. For add, it
+limits the server to those agents; elsewhere, it limits the command to them.
 
 Other options: --project DIR to start from another directory, --manifest FILE
 to use another manifest, --home DIR to read and write under another home.

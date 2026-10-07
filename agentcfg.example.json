@@ -1,29 +1,20 @@
 {
   "version": 1,
   "servers": {
-    "linear": {
-      "transport": "http",
-      "url": "https://mcp.linear.app/mcp"
-    },
     "docs": {
       "transport": "http",
       "url": "https://example.com/mcp",
       "headers": { "Authorization": "Bearer ${DOCS_TOKEN}" },
       "agents": ["cursor", "claude"]
-    }
-  },
-  "presets": {
-    "nextjs": {
-      "next-devtools": {
-        "transport": "stdio",
-        "command": "pnpm",
-        "args": ["dlx", "next-devtools-mcp@latest"]
-      },
-      "shadcn": {
-        "transport": "stdio",
-        "command": "pnpm",
-        "args": ["dlx", "shadcn@latest", "mcp"]
-      }
+    },
+    "linear": {
+      "transport": "http",
+      "url": "https://mcp.linear.app/mcp"
+    },
+    "shadcn": {
+      "transport": "stdio",
+      "command": "pnpm",
+      "args": ["dlx", "shadcn@latest", "mcp"]
     }
   }
 }

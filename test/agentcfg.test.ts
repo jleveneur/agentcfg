@@ -120,49 +120,57 @@ test("prune previews, backs up, and reports what it removes", async () => {
   assert.match(codex, /mcp_servers\.node_repl/);
 });
 
-test("add copies a preset into the project manifest and sync writes the project files", async () => {
+test("add and remove edit the project manifest, and sync writes the project files", async () => {
   const root = await mkdtemp(join(tmpdir(), "agentcfg-project-"));
   const home = join(root, "home");
   const app = join(root, "code", "web");
   await mkdir(join(app, "src", "pages"), { recursive: true });
-  await put(globalManifest(home), {
-    version: 1,
-    servers: { linear: { transport: "http", url: "https://mcp.linear.app/mcp" } },
-    presets: {
-      nextjs: {
-        "next-devtools": { transport: "stdio", command: "pnpm", args: ["dlx", "next-devtools-mcp@latest"] },
-        shadcn: { transport: "stdio", command: "pnpm", args: ["dlx", "shadcn@latest", "mcp"], agents: ["cursor", "claude"] },
-      },
-    },
-  });
+  await put(globalManifest(home), { version: 1, servers: { linear: { transport: "http", url: "https://mcp.linear.app/mcp" } } });
   await put(join(app, ".mcp.json"), { mcpServers: { shadcn: { command: "npx", args: ["shadcn", "mcp"] } } });
 
   const missing = await run(["sync", "--home", home], { cwd: app });
   assert.equal(missing.code, 1);
   assert.match(missing.stderr, /No agentcfg\.json in .* or its parents/);
 
-  const unknown = await run(["add", "rails", "--home", home], { cwd: app });
-  assert.match(unknown.stderr, /No preset "rails".* Presets: nextjs\./);
+  const remote = await run(["add", "reui", "https://mcp.reui.io", "--header", "Authorization: Bearer ${REUI_TOKEN}", "--home", home], { cwd: app });
+  assert.equal(remote.code, 0, remote.stderr);
+  assert.match(remote.stdout, /Added reui in .*agentcfg\.json/);
+  const local = await run(
+    ["add", "shadcn", "--agent", "cursor,claude", "--home", home, "--", "pnpm", "dlx", "shadcn@latest", "mcp"],
+    { cwd: app },
+  );
+  assert.equal(local.code, 0, local.stderr);
+  assert.deepEqual((await json(join(app, "agentcfg.json"))).servers, {
+    reui: { transport: "http", url: "https://mcp.reui.io", headers: { Authorization: "Bearer ${REUI_TOKEN}" } },
+    shadcn: { transport: "stdio", command: "pnpm", args: ["dlx", "shadcn@latest", "mcp"], agents: ["cursor", "claude"] },
+  });
 
-  const added = await run(["add", "nextjs", "--home", home], { cwd: app });
-  assert.equal(added.code, 0, added.stderr);
-  assert.match(added.stdout, /Added next-devtools, shadcn/);
-  const manifest = await json(join(app, "agentcfg.json"));
-  assert.deepEqual(Object.keys(manifest.servers), ["next-devtools", "shadcn"]);
-  assert.equal(manifest.presets, undefined);
+  const secret = await run(["add", "keyed", "https://x.example/mcp", "--header", "X-Key: abc123", "--home", home], { cwd: app });
+  assert.equal(secret.code, 1);
+  assert.match(secret.stderr, /Literal secret in headers\.X-Key/);
+  const again = await run(["add", "reui", "https://other.example/mcp", "--home", home], { cwd: app });
+  assert.match(again.stderr, /reui is already in .* Pass --force/);
 
   // Found from a subdirectory, like git.
   const synced = await run(["sync", "--home", home], { cwd: join(app, "src", "pages") });
   assert.equal(synced.code, 0, synced.stderr);
-  assert.deepEqual(Object.keys((await json(join(app, ".cursor", "mcp.json"))).mcpServers), ["next-devtools", "shadcn"]);
+  assert.deepEqual(Object.keys((await json(join(app, ".cursor", "mcp.json"))).mcpServers), ["reui", "shadcn"]);
   assert.deepEqual((await json(join(app, ".mcp.json"))).mcpServers.shadcn.args, ["dlx", "shadcn@latest", "mcp"]);
   const codex = await readFile(join(app, ".codex", "config.toml"), "utf8");
-  assert.match(codex, /\[mcp_servers\.next-devtools\]/);
+  assert.match(codex, /\[mcp_servers\.reui\]\nurl = "https:\/\/mcp\.reui\.io"\nbearer_token_env_var = "REUI_TOKEN"/);
   assert.doesNotMatch(codex, /shadcn/);
   assert.deepEqual(await readdir(home).then((entries) => entries.sort()), [".config", ".local"]);
+  assert.equal((await run(["diff", "--home", home], { cwd: app })).code, 0);
 
-  const diff = await run(["diff", "--home", home], { cwd: app });
-  assert.equal(diff.code, 0, diff.stdout);
+  const removed = await run(["remove", "reui", "--home", home], { cwd: app });
+  assert.equal(removed.code, 0, removed.stderr);
+  assert.match(removed.stdout, /sync --prune/);
+  const pruned = await run(["sync", "--prune", "--home", home], { cwd: app });
+  assert.match(pruned.stdout, /Removed cursor reui, claude reui, codex reui/);
+
+  const global = await run(["add", "figma", "https://mcp.figma.com/mcp", "--global", "--home", home], { cwd: app });
+  assert.equal(global.code, 0, global.stderr);
+  assert.deepEqual(Object.keys((await json(globalManifest(home))).servers), ["figma", "linear"]);
 });
 
 test("import in a project creates its manifest from the project files", async () => {
@@ -181,12 +189,17 @@ test("import in a project creates its manifest from the project files", async ()
   assert.deepEqual(manifest.servers.search.agents, ["cursor"]);
 });
 
-test("a manifest from the old format with projects is refused with a hint", async () => {
+test("manifests in older formats are refused with a hint", async () => {
   const home = await mkdtemp(join(tmpdir(), "agentcfg-old-"));
   await put(globalManifest(home), { version: 1, servers: {}, projects: { "/tmp/web": {} } });
-  const result = await run(["sync", "--global", "--home", home]);
-  assert.equal(result.code, 1);
-  assert.match(result.stderr, /Each project now keeps its own agentcfg\.json/);
+  const projects = await run(["sync", "--global", "--home", home]);
+  assert.equal(projects.code, 1);
+  assert.match(projects.stderr, /Each project now keeps its own agentcfg\.json/);
+
+  await put(globalManifest(home), { version: 1, servers: {}, presets: { nextjs: {} } });
+  const presets = await run(["sync", "--global", "--home", home]);
+  assert.equal(presets.code, 1);
+  assert.match(presets.stderr, /has presets, which agentcfg no longer reads/);
 });
 
 test("codex config round-trips quoted names, literal strings, and env headers", async () => {

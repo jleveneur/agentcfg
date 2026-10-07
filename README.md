@@ -39,52 +39,48 @@ Projects come from `--projects DIR`, the current directory, and the projects Cla
 
 ## Keep two manifests
 
-Like git with `~/.gitconfig` and `.git/config`, agentcfg has a global manifest and one per project.
+Like git with `~/.gitconfig` and `.git/config`, agentcfg has a global manifest and one per project. Both have the same shape.
 
 | Manifest | Holds | Lives in |
 | --- | --- | --- |
-| Global | Servers for every project, and presets | `~/.config/agentcfg/agentcfg.json` (or `$AGENTCFG_CONFIG`) |
+| Global | Servers for every project | `~/.config/agentcfg/agentcfg.json` (or `$AGENTCFG_CONFIG`) |
 | Project | The project's servers | `agentcfg.json` at the project root, committed |
 
 Commands work on the project manifest, found from the current directory up. Pass `--global` for the global one.
+
+```bash
+agentcfg add linear https://mcp.linear.app/mcp --global
+agentcfg sync --global            # ~/.cursor/mcp.json, ~/.claude.json, ~/.codex/config.toml
+
+cd ~/code/web
+agentcfg add reui https://mcp.reui.io
+agentcfg add shadcn -- pnpm dlx shadcn@latest mcp
+agentcfg sync                     # .cursor/mcp.json, .mcp.json, .codex/config.toml
+agentcfg diff                     # exit code 1 when an agent file drifted
+
+agentcfg remove reui
+agentcfg sync --prune
+```
+
+`add` takes a URL for a remote server, or a command after `--`. `--header 'KEY: VALUE'` and `--env 'KEY=VALUE'` can repeat, and `--agent cursor,claude` limits a server to some agents. The result is plain JSON you can also edit by hand:
 
 ```json
 {
   "version": 1,
   "servers": {
-    "linear": { "transport": "http", "url": "https://mcp.linear.app/mcp" },
-    "docs": {
-      "transport": "http",
-      "url": "https://example.com/mcp",
-      "headers": { "Authorization": "Bearer ${DOCS_TOKEN}" }
-    }
-  },
-  "presets": {
-    "nextjs": {
-      "next-devtools": { "transport": "stdio", "command": "pnpm", "args": ["dlx", "next-devtools-mcp@latest"] },
-      "shadcn": { "transport": "stdio", "command": "pnpm", "args": ["dlx", "shadcn@latest", "mcp"] }
-    }
+    "reui": { "transport": "http", "url": "https://mcp.reui.io" },
+    "shadcn": { "transport": "stdio", "command": "pnpm", "args": ["dlx", "shadcn@latest", "mcp"], "agents": ["cursor", "claude"] }
   }
 }
 ```
 
-```bash
-agentcfg sync --global            # ~/.cursor/mcp.json, ~/.claude.json, ~/.codex/config.toml
-cd ~/code/web
-agentcfg add nextjs               # copies the preset into ./agentcfg.json
-agentcfg sync                     # .cursor/mcp.json, .mcp.json, .codex/config.toml
-agentcfg diff                     # exit code 1 when an agent file drifted
-```
-
-A server goes to every agent unless it lists `"agents": ["cursor", "claude"]`.
-
-`add` copies the preset's servers into the project manifest, so the project file stands on its own and teammates do not need your presets. Commit both `agentcfg.json` and the files `sync` generates: anyone without agentcfg still gets the servers.
+Commit both `agentcfg.json` and the files `sync` generates: anyone without agentcfg still gets the servers.
 
 `import` builds a manifest from existing agent files: `agentcfg import --global` for your home configs, `agentcfg import` inside a project. Servers with literal secrets are skipped, and servers written by the Codex or ChatGPT app are left out.
 
 ### Variables and secrets
 
-Write secrets as `${NAME}` in the manifest. agentcfg translates them for each agent:
+Write secrets as `${NAME}` in the manifest, in single quotes on the command line so the shell leaves them alone. `add` refuses literal secrets. agentcfg translates the references for each agent:
 
 | Manifest | Cursor | Claude Code | Codex |
 | --- | --- | --- | --- |

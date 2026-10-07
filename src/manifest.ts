@@ -19,8 +19,10 @@ export async function readManifest(file: string): Promise<Manifest> {
   if ("projects" in data) {
     throw new Error(`${file} lists projects. Each project now keeps its own agentcfg.json at its root.`);
   }
+  if ("presets" in data) {
+    throw new Error(`${file} has presets, which agentcfg no longer reads. List the servers in each project's agentcfg.json.`);
+  }
   const manifest: Manifest = { version: 1, servers: data.servers as ServerMap };
-  if (isRecord(data.presets)) manifest.presets = data.presets as Record<string, ServerMap>;
   validate(manifest, file);
   return manifest;
 }
@@ -35,15 +37,7 @@ export async function readManifestOrEmpty(file: string): Promise<Manifest> {
 }
 
 export async function writeManifest(file: string, manifest: Manifest): Promise<void> {
-  const ordered: Manifest = { version: 1, servers: sortServers(manifest.servers) };
-  if (manifest.presets && Object.keys(manifest.presets).length) {
-    ordered.presets = Object.fromEntries(
-      Object.entries(manifest.presets)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([name, servers]) => [name, sortServers(servers)]),
-    );
-  }
-  await writeFileAtomic(file, formatJson(ordered));
+  await writeFileAtomic(file, formatJson({ version: 1, servers: sortServers(manifest.servers) }));
 }
 
 function sortServers(servers: ServerMap): ServerMap {
@@ -54,23 +48,18 @@ export function agentsFor(server: ManifestServer): Agent[] {
   return server.agents ?? [...AGENTS];
 }
 
-function validate(manifest: Manifest, file: string): void {
-  const groups: [string, ServerMap][] = [
-    ["", manifest.servers],
-    ...Object.entries(manifest.presets ?? {}).map(([name, servers]): [string, ServerMap] => [`preset ${name}: `, servers]),
-  ];
-  for (const [prefix, servers] of groups) {
-    if (!isRecord(servers)) throw new Error(`${file}: ${prefix}servers must be an object`);
-    for (const [name, server] of Object.entries(servers)) {
-      const where = `${file}: ${prefix}${name}`;
-      if (!isRecord(server)) throw new Error(`${where} must be an object`);
-      if (!["stdio", "http", "sse"].includes(server.transport)) {
-        throw new Error(`${where} needs transport "stdio", "http", or "sse"`);
-      }
-      if (server.transport === "stdio" && typeof server.command !== "string") throw new Error(`${where} needs a command`);
-      if (server.transport !== "stdio" && typeof server.url !== "string") throw new Error(`${where} needs a url`);
-      const unknown = (server.agents ?? []).filter((agent) => !isAgent(agent));
-      if (unknown.length) throw new Error(`${where} lists unknown agents: ${unknown.join(", ")}`);
-    }
+export function validateServer(server: unknown, where: string): asserts server is ManifestServer {
+  if (!isRecord(server)) throw new Error(`${where} must be an object`);
+  if (!["stdio", "http", "sse"].includes(server.transport as string)) {
+    throw new Error(`${where} needs transport "stdio", "http", or "sse"`);
   }
+  if (server.transport === "stdio" && typeof server.command !== "string") throw new Error(`${where} needs a command`);
+  if (server.transport !== "stdio" && typeof server.url !== "string") throw new Error(`${where} needs a url`);
+  const agents = Array.isArray(server.agents) ? (server.agents as string[]) : [];
+  const unknown = agents.filter((agent) => !isAgent(agent));
+  if (unknown.length) throw new Error(`${where} lists unknown agents: ${unknown.join(", ")}`);
+}
+
+function validate(manifest: Manifest, file: string): void {
+  for (const [name, server] of Object.entries(manifest.servers)) validateServer(server, `${file}: ${name}`);
 }

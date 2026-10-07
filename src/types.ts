@@ -23,12 +23,10 @@ export interface ManifestServer extends Server {
 
 export type ServerMap = Record<string, ManifestServer>;
 
-// The global manifest has servers and presets. A project manifest has
-// servers only.
+// The global manifest and each project manifest have the same shape.
 export interface Manifest {
   version: 1;
   servers: ServerMap;
-  presets?: Record<string, ServerMap>;
 }
 
 export function isAgent(value: string): value is Agent {

@@ -2,7 +2,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { Backup } from "./backup.ts";
 import { isManagedServer } from "./codex-toml.ts";
 import { fileExists } from "./files.ts";
-import { agentsFor, readManifest, readManifestOrEmpty, writeManifest } from "./manifest.ts";
+import { agentsFor, readManifest, readManifestOrEmpty, validateServer, writeManifest } from "./manifest.ts";
 import {
   type Context,
   findProjectManifest,
@@ -62,7 +62,7 @@ export async function resolveScope(options: CommandOptions): Promise<Scope> {
   const file = options.manifest ? resolve(options.manifest) : await findProjectManifest(options.dir, options.ctx);
   if (!file) {
     throw new Error(
-      `No ${MANIFEST_NAME} in ${options.dir} or its parents. Create one with "agentcfg add <preset>" or "agentcfg import", or pass --global.`,
+      `No ${MANIFEST_NAME} in ${options.dir} or its parents. Create one with "agentcfg add NAME URL" or "agentcfg import", or pass --global.`,
     );
   }
   const root = dirname(file);
@@ -70,7 +70,7 @@ export async function resolveScope(options: CommandOptions): Promise<Scope> {
 }
 
 // Reads the agent files of one scope into its manifest. A project import
-// creates <dir>/agentcfg.json; the global one keeps existing presets.
+// creates <dir>/agentcfg.json.
 export async function importConfigs(options: CommandOptions) {
   if (options.prefer && !isAgent(options.prefer)) throw new Error(`Unknown agent for --prefer: ${options.prefer}`);
   const scope: Scope = options.global
@@ -92,40 +92,91 @@ export async function importConfigs(options: CommandOptions) {
   return { scope, manifest, warnings, conflicts };
 }
 
-// Copies presets from the global manifest into the project manifest,
-// creating it in the current directory when there is none.
-export async function addPresets(options: CommandOptions, names: string[]) {
-  if (!names.length) throw new Error("Name at least one preset: agentcfg add <preset>");
-  const globalFile = locations(options.ctx).globalManifest;
-  const global = await readManifest(globalFile).catch((error: Error) => {
-    throw new Error(`${error.message}. Presets live in the global manifest.`);
-  });
-  const file = options.manifest
-    ? resolve(options.manifest)
-    : ((await findProjectManifest(options.dir, options.ctx)) ?? join(resolve(options.dir), MANIFEST_NAME));
-  const project = await readManifestOrEmpty(file);
-  const added: string[] = [];
-  const skipped: string[] = [];
+export interface ServerSpec {
+  name: string;
+  // A URL for a remote server, or a command and its arguments after `--`.
+  url?: string;
+  command?: string[];
+  transport?: string;
+  headers?: string[];
+  env?: string[];
+}
 
-  for (const preset of names) {
-    const servers = global.presets?.[preset];
-    if (!servers) {
-      const known = Object.keys(global.presets ?? {});
-      throw new Error(`No preset "${preset}" in ${globalFile}.${known.length ? ` Presets: ${known.join(", ")}.` : ""}`);
-    }
-    for (const [name, server] of Object.entries(servers)) {
-      const current = project.servers[name];
-      if (current && sameServer(current, server)) continue;
-      if (current && !options.force) {
-        skipped.push(name);
-        continue;
-      }
-      project.servers[name] = server;
-      added.push(name);
-    }
+// Adds one server to the project manifest, creating it in the current
+// directory when there is none, or to the global manifest with --global.
+export async function addServer(options: CommandOptions, spec: ServerSpec) {
+  if (!/^[A-Za-z0-9_.-]+$/.test(spec.name)) throw new Error(`Server names use letters, digits, ".", "_" and "-": ${spec.name}`);
+  const server = buildServer(spec, options);
+  const secrets = secretFields(server);
+  if (secrets.length) {
+    throw new Error(`Literal secret in ${secrets.join(", ")}. Write it as \${NAME} and set NAME in your environment.`);
   }
-  if (!options.dryRun) await writeManifest(file, project);
-  return { file, added, skipped };
+  validateServer(server, spec.name);
+
+  const file = await editableManifest(options);
+  const manifest = await readManifestOrEmpty(file);
+  const current = manifest.servers[spec.name];
+  if (current && !options.force) {
+    if (sameServer(current, server) && (current.agents ?? []).join() === (server.agents ?? []).join()) {
+      return { file, status: "unchanged" as const };
+    }
+    throw new Error(`${spec.name} is already in ${file}. Pass --force to replace it.`);
+  }
+  manifest.servers[spec.name] = server;
+  if (!options.dryRun) await writeManifest(file, manifest);
+  return { file, status: current ? ("replaced" as const) : ("added" as const) };
+}
+
+export async function removeServer(options: CommandOptions, name: string) {
+  const file = await editableManifest(options, { create: false });
+  const manifest = await readManifest(file);
+  if (!manifest.servers[name]) throw new Error(`${name} is not in ${file}`);
+  delete manifest.servers[name];
+  if (!options.dryRun) await writeManifest(file, manifest);
+  return { file };
+}
+
+async function editableManifest(options: CommandOptions, { create = true } = {}): Promise<string> {
+  if (options.global || options.manifest) return (await resolveScope(options)).manifest;
+  const found = await findProjectManifest(options.dir, options.ctx);
+  if (found) return found;
+  if (!create) return (await resolveScope(options)).manifest;
+  return join(resolve(options.dir), MANIFEST_NAME);
+}
+
+function buildServer(spec: ServerSpec, options: CommandOptions): ManifestServer {
+  const agents = options.agents?.length ? options.agents : undefined;
+  const unknown = (agents ?? []).filter((agent) => !isAgent(agent));
+  if (unknown.length) throw new Error(`Unknown agents: ${unknown.join(", ")}`);
+  const env = pairs(spec.env, "=", "--env");
+  const headers = pairs(spec.headers, ":", "--header");
+
+  let server: ManifestServer;
+  if (spec.command?.length) {
+    if (spec.url) throw new Error("Give either a URL or a command after --, not both.");
+    if (headers) throw new Error("--header only applies to remote servers.");
+    const [command, ...args] = spec.command;
+    server = { transport: "stdio", command: command!, ...(args.length ? { args } : {}), ...(env ? { env } : {}) };
+  } else if (spec.url) {
+    if (env) throw new Error("--env only applies to commands. Remote servers take --header.");
+    const transport = spec.transport ?? "http";
+    if (transport !== "http" && transport !== "sse") throw new Error(`--transport is http or sse, not ${transport}`);
+    server = { transport, url: spec.url, ...(headers ? { headers } : {}) };
+  } else {
+    throw new Error("Give a URL (agentcfg add NAME URL) or a command (agentcfg add NAME -- COMMAND ARGS...).");
+  }
+  return agents ? { ...server, agents: agents as Agent[] } : server;
+}
+
+function pairs(values: string[] | undefined, separator: string, flag: string): Record<string, string> | undefined {
+  if (!values?.length) return undefined;
+  const out: Record<string, string> = {};
+  for (const value of values) {
+    const at = value.indexOf(separator);
+    if (at <= 0) throw new Error(`${flag} expects KEY${separator === ":" ? ": " : "="}VALUE, got ${value}`);
+    out[value.slice(0, at).trim()] = value.slice(at + 1).trim();
+  }
+  return out;
 }
 
 export async function diffConfigs(options: CommandOptions) {
