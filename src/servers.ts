@@ -6,6 +6,11 @@ import type { Agent, Server, ServerMap } from "./types.ts";
 // Claude Desktop, VS Code, Windsurf, Gemini, and plugin .mcp.json files.
 export function fromJsonServer(raw: unknown): Server | null {
   if (!isRecord(raw)) return null;
+  const server = readJsonServer(raw);
+  return server && mapStrings(server, fromCursorVars);
+}
+
+function readJsonServer(raw: Record<string, unknown>): Server | null {
   const enabled = raw.disabled === true || raw.enabled === false ? false : undefined;
   const url = firstString(raw.url, raw.serverUrl, raw.httpUrl);
   if (url) {
@@ -40,10 +45,38 @@ export function fromJsonServers(raw: unknown): ServerMap {
 }
 
 export function toCursor(server: Server): Record<string, unknown> {
-  if (server.transport === "stdio") {
-    return compact({ command: server.command, args: server.args, env: server.env });
+  const out = mapStrings(server, toCursorVars);
+  if (out.transport === "stdio") {
+    return compact({ command: out.command, args: out.args, env: out.env });
   }
-  return compact({ url: server.url, headers: server.headers });
+  return compact({ url: out.url, headers: out.headers });
+}
+
+// Cursor only expands ${env:NAME}, plus a few names of its own such as
+// ${workspaceFolder}. Claude Code and the manifest use ${NAME}.
+const CURSOR_BUILTINS = new Set(["userHome", "workspaceFolder", "workspaceFolderBasename", "pathSeparator"]);
+
+export function toCursorVars(value: string): string {
+  return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (match, name: string) =>
+    CURSOR_BUILTINS.has(name) ? match : `\${env:${name}}`,
+  );
+}
+
+function fromCursorVars(value: string): string {
+  return value.replace(/\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => `\${${name}}`);
+}
+
+function mapStrings(server: Server, map: (value: string) => string): Server {
+  const record = (value?: Record<string, string>) =>
+    value && Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, map(entry)]));
+  return compact({
+    ...server,
+    url: server.url && map(server.url),
+    command: server.command && map(server.command),
+    args: server.args?.map(map),
+    env: record(server.env),
+    headers: record(server.headers),
+  });
 }
 
 export function toClaude(server: Server): Record<string, unknown> {
@@ -65,7 +98,6 @@ export function forAgent(server: Server, agent: Agent): Server {
       args: server.args,
       env: server.transport === "stdio" ? server.env : undefined,
       cwd: server.cwd,
-      bearerTokenEnvVar: server.bearerTokenEnvVar,
       startupTimeoutSec: server.startupTimeoutSec,
       enabled: server.enabled === false ? false : undefined,
     });
@@ -89,7 +121,6 @@ export function signature(server: Server): string {
     args: server.args ?? [],
     env: sortKeys(server.env),
     headers: sortKeys(server.headers),
-    bearerTokenEnvVar: server.bearerTokenEnvVar ?? null,
     enabled: server.enabled !== false,
     cwd: server.cwd ?? null,
     startupTimeoutSec: server.startupTimeoutSec ?? null,
@@ -146,9 +177,14 @@ export function secretFields(server: Server): string[] {
   return fields;
 }
 
+// A value is safe to store when its secret part comes from a variable:
+// `${TOKEN}`, `$TOKEN`, or `Bearer ${TOKEN}`.
 export function isLiteralSecret(value: unknown): boolean {
   if (typeof value !== "string" || value.length === 0) return false;
-  return !/^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(value) && !/^\$[A-Za-z_][A-Za-z0-9_]*$/.test(value);
+  if (/^\$[A-Za-z_][A-Za-z0-9_]*$/.test(value)) return false;
+  if (!/\$\{(env:)?[A-Za-z_][A-Za-z0-9_]*\}/.test(value)) return true;
+  const rest = value.replace(/\$\{(env:)?[A-Za-z_][A-Za-z0-9_]*\}/g, "").trim();
+  return !["", "Bearer", "Token", "Basic"].includes(rest);
 }
 
 const SECRET_NAME = /key|token|secret|passw|auth|bearer|cookie|sig/i;

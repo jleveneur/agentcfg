@@ -1,47 +1,53 @@
 import { readFile } from "node:fs/promises";
-import { isRecord, writeFileAtomic } from "./files.ts";
+import { formatJson, isMissing, isRecord, writeFileAtomic } from "./files.ts";
 import { AGENTS, isAgent, type Agent, type Manifest, type ManifestServer, type ServerMap } from "./types.ts";
 
 export function emptyManifest(): Manifest {
-  return { version: 1, servers: {}, projects: {} };
+  return { version: 1, servers: {} };
 }
 
 export async function readManifest(file: string): Promise<Manifest> {
-  const data: unknown = JSON.parse(await readFile(file, "utf8"));
-  if (!isRecord(data) || !isRecord(data.servers)) {
-    throw new Error(`${file} must contain a servers object`);
+  let text: string;
+  try {
+    text = await readFile(file, "utf8");
+  } catch (error) {
+    if (isMissing(error)) throw new Error(`${file} does not exist`);
+    throw error;
   }
-  const manifest: Manifest = {
-    version: 1,
-    servers: data.servers as ServerMap,
-    projects: isRecord(data.projects) ? (data.projects as Record<string, ServerMap>) : {},
-  };
+  const data: unknown = JSON.parse(text);
+  if (!isRecord(data) || !isRecord(data.servers)) throw new Error(`${file} must contain a servers object`);
+  if ("projects" in data) {
+    throw new Error(`${file} lists projects. Each project now keeps its own agentcfg.json at its root.`);
+  }
+  const manifest: Manifest = { version: 1, servers: data.servers as ServerMap };
+  if (isRecord(data.presets)) manifest.presets = data.presets as Record<string, ServerMap>;
   validate(manifest, file);
   return manifest;
 }
 
-export async function writeManifest(file: string, manifest: Manifest): Promise<void> {
-  const ordered = {
-    version: 1,
-    servers: sortServers(manifest.servers, "global"),
-    projects: Object.fromEntries(
-      Object.entries(manifest.projects ?? {})
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([project, servers]) => [project, sortServers(servers, "project")]),
-    ),
-  };
-  await writeFileAtomic(file, `${JSON.stringify(ordered, null, 2)}\n`);
+export async function readManifestOrEmpty(file: string): Promise<Manifest> {
+  try {
+    return await readManifest(file);
+  } catch (error) {
+    if ((error as Error).message === `${file} does not exist`) return emptyManifest();
+    throw error;
+  }
 }
 
-function sortServers(servers: ServerMap, scope: "global" | "project"): ServerMap {
-  return Object.fromEntries(
-    Object.entries(servers ?? {})
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([name, server]) => {
-        const { scope: _scope, ...rest } = server;
-        return [name, { ...rest, scope }];
-      }),
-  );
+export async function writeManifest(file: string, manifest: Manifest): Promise<void> {
+  const ordered: Manifest = { version: 1, servers: sortServers(manifest.servers) };
+  if (manifest.presets && Object.keys(manifest.presets).length) {
+    ordered.presets = Object.fromEntries(
+      Object.entries(manifest.presets)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([name, servers]) => [name, sortServers(servers)]),
+    );
+  }
+  await writeFileAtomic(file, formatJson(ordered));
+}
+
+function sortServers(servers: ServerMap): ServerMap {
+  return Object.fromEntries(Object.entries(servers).sort(([a], [b]) => a.localeCompare(b)));
 }
 
 export function agentsFor(server: ManifestServer): Agent[] {
@@ -49,10 +55,14 @@ export function agentsFor(server: ManifestServer): Agent[] {
 }
 
 function validate(manifest: Manifest, file: string): void {
-  const buckets: [string, ServerMap][] = [["servers", manifest.servers], ...Object.entries(manifest.projects)];
-  for (const [bucket, servers] of buckets) {
+  const groups: [string, ServerMap][] = [
+    ["", manifest.servers],
+    ...Object.entries(manifest.presets ?? {}).map(([name, servers]): [string, ServerMap] => [`preset ${name}: `, servers]),
+  ];
+  for (const [prefix, servers] of groups) {
+    if (!isRecord(servers)) throw new Error(`${file}: ${prefix}servers must be an object`);
     for (const [name, server] of Object.entries(servers)) {
-      const where = `${file}: ${bucket === "servers" ? "" : `${bucket} `}${name}`;
+      const where = `${file}: ${prefix}${name}`;
       if (!isRecord(server)) throw new Error(`${where} must be an object`);
       if (!["stdio", "http", "sse"].includes(server.transport)) {
         throw new Error(`${where} needs transport "stdio", "http", or "sse"`);

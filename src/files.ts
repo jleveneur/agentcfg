@@ -22,7 +22,20 @@ export async function readJson(file: string): Promise<Record<string, unknown>> {
 }
 
 export async function writeJson(file: string, data: unknown): Promise<void> {
-  await writeFileAtomic(file, `${JSON.stringify(data, null, 2)}\n`);
+  await writeFileAtomic(file, formatJson(data));
+}
+
+const SCALAR = String.raw`(?:"(?:[^"\\]|\\.)*"|-?\d[\d.eE+-]*|true|false|null)`;
+const SCALAR_ARRAY = new RegExp(String.raw`\[\n\s+(${SCALAR}(?:,\n\s+${SCALAR})*)\n\s*\]`, "g");
+
+// Two-space JSON with short arrays of scalars kept on one line, the way
+// people write `"args": ["-y", "server"]` by hand. Keeps diffs small.
+export function formatJson(data: unknown): string {
+  const text = JSON.stringify(data, null, 2).replace(SCALAR_ARRAY, (match, items: string) => {
+    const inline = `[${items.split(/,\n\s+/).join(", ")}]`;
+    return inline.length <= 80 ? inline : match;
+  });
+  return `${text}\n`;
 }
 
 // Writes through a temp file so a crash never leaves a half-written config,

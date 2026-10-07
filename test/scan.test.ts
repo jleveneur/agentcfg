@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { formatJson } from "../src/files.ts";
 import { cursorSlug } from "../src/scan.ts";
 import { identity, redact } from "../src/servers.ts";
 import { run } from "./helpers.ts";
@@ -17,6 +18,15 @@ test("identity folds runners, versions, and tracking params together", () => {
   assert.equal(identity({ transport: "stdio", command: "pnpm", args: ["dlx", "shadcn@latest", "mcp"] }), "pkg:shadcn mcp");
   assert.equal(identity({ transport: "stdio", command: "npx", args: ["-y", "@scope/tool@1.2.3"] }), "pkg:@scope/tool");
   assert.equal(identity({ transport: "http", url: "https://MCP.Sentry.dev/mcp/?utm_source=plugin" }), "https://mcp.sentry.dev/mcp");
+});
+
+test("formatJson keeps short scalar arrays on one line", () => {
+  const long = Array.from({ length: 12 }, (_, index) => `argument-${index}`);
+  const text = formatJson({ a: { args: ["dlx", 'say "hi"'], env: { X: "1" } }, b: long, c: [{ d: 1 }] });
+  assert.match(text, /"args": \["dlx", "say \\"hi\\""\],/);
+  assert.match(text, /"b": \[\n {4}"argument-0",/);
+  assert.match(text, /"c": \[\n {4}\{\n/);
+  assert.deepEqual(JSON.parse(text), { a: { args: ["dlx", 'say "hi"'], env: { X: "1" } }, b: long, c: [{ d: 1 }] });
 });
 
 test("redact masks literal secrets and keeps variable references", () => {

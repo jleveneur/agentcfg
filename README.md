@@ -37,44 +37,66 @@ It covers:
 
 Projects come from `--projects DIR`, the current directory, and the projects Claude Code and Codex already know. Env values, headers, credential-like query params, and arguments are masked. `--json` prints the full report.
 
-## Keep one manifest
+## Keep two manifests
 
-`agentcfg.json` holds the servers you manage. Global servers go in `servers`. Project servers go in `projects`, keyed by the project path.
+Like git with `~/.gitconfig` and `.git/config`, agentcfg has a global manifest and one per project.
+
+| Manifest | Holds | Lives in |
+| --- | --- | --- |
+| Global | Servers for every project, and presets | `~/.config/agentcfg/agentcfg.json` (or `$AGENTCFG_CONFIG`) |
+| Project | The project's servers | `agentcfg.json` at the project root, committed |
+
+Commands work on the project manifest, found from the current directory up. Pass `--global` for the global one.
 
 ```json
 {
   "version": 1,
   "servers": {
+    "linear": { "transport": "http", "url": "https://mcp.linear.app/mcp" },
     "docs": {
       "transport": "http",
       "url": "https://example.com/mcp",
-      "headers": { "Authorization": "Bearer ${DOCS_TOKEN}" },
-      "agents": ["cursor", "claude", "codex"]
-    },
-    "local-tools": {
-      "transport": "stdio",
-      "command": "npx",
-      "args": ["-y", "some-mcp-server"],
-      "env": { "API_TOKEN": "${API_TOKEN}" }
+      "headers": { "Authorization": "Bearer ${DOCS_TOKEN}" }
+    }
+  },
+  "presets": {
+    "nextjs": {
+      "next-devtools": { "transport": "stdio", "command": "pnpm", "args": ["dlx", "next-devtools-mcp@latest"] },
+      "shadcn": { "transport": "stdio", "command": "pnpm", "args": ["dlx", "shadcn@latest", "mcp"] }
     }
   }
 }
 ```
 
 ```bash
-npx agentcfg import --projects ~/code
-npx agentcfg diff
-npx agentcfg sync --dry-run --prune
-npx agentcfg sync --prune
+agentcfg sync --global            # ~/.cursor/mcp.json, ~/.claude.json, ~/.codex/config.toml
+cd ~/code/web
+agentcfg add nextjs               # copies the preset into ./agentcfg.json
+agentcfg sync                     # .cursor/mcp.json, .mcp.json, .codex/config.toml
+agentcfg diff                     # exit code 1 when an agent file drifted
 ```
 
-`import` reads the global configs, and with `--projects DIR` the projects inside `DIR`. A project server that matches a global server is kept once, as the global server. Servers with literal secrets are skipped: write them as `${ENV_NAME}` yourself.
+A server goes to every agent unless it lists `"agents": ["cursor", "claude"]`.
 
-`sync` writes each server to the agents and scope it belongs to, and leaves the rest of each file alone. Servers that exist only in an agent stay there unless you pass `--prune`. Servers written by the Codex or ChatGPT app are never pruned. Before any file changes, agentcfg copies it to `~/.local/state/agentcfg/backups/<time>/`, and it prints what `--prune` removed. Run with `--dry-run` first to see what would change.
+`add` copies the preset's servers into the project manifest, so the project file stands on its own and teammates do not need your presets. Commit both `agentcfg.json` and the files `sync` generates: anyone without agentcfg still gets the servers.
 
-For Codex, a header written `${VAR}` becomes `env_http_headers`, and a literal one becomes `http_headers`.
+`import` builds a manifest from existing agent files: `agentcfg import --global` for your home configs, `agentcfg import` inside a project. Servers with literal secrets are skipped, and servers written by the Codex or ChatGPT app are left out.
 
-Plugins and hosted connectors are not written by `sync`; `scan` reports them.
+### Variables and secrets
+
+Write secrets as `${NAME}` in the manifest. agentcfg translates them for each agent:
+
+| Manifest | Cursor | Claude Code | Codex |
+| --- | --- | --- | --- |
+| `"Authorization": "Bearer ${TOKEN}"` | `Bearer ${env:TOKEN}` | unchanged | `bearer_token_env_var = "TOKEN"` |
+| header `"X-Key": "${KEY}"` | `${env:KEY}` | unchanged | `env_http_headers = { X-Key = "KEY" }` |
+| env `"TOKEN": "${TOKEN}"` | `${env:TOKEN}` | unchanged | `env_vars = ["TOKEN"]` |
+
+### Safety
+
+`sync` changes only the MCP entries of each file. Servers that exist only in an agent stay there unless you pass `--prune`, and servers written by the Codex or ChatGPT app are never pruned. Before any file changes, agentcfg copies it to `~/.local/state/agentcfg/backups/<time>/`. Run `sync --dry-run --prune` first to see what would be removed.
+
+Plugins and claude.ai connectors are not written by `sync`; `scan` reports plugins.
 
 ## Development
 

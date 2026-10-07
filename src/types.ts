@@ -3,6 +3,8 @@ export type Agent = (typeof AGENTS)[number];
 
 export type Transport = "stdio" | "http" | "sse";
 
+// Values may reference environment variables as ${NAME}. agentcfg rewrites
+// them into each agent's own syntax when it writes a config.
 export interface Server {
   transport: Transport;
   url?: string;
@@ -11,22 +13,22 @@ export interface Server {
   args?: string[];
   env?: Record<string, string>;
   cwd?: string;
-  bearerTokenEnvVar?: string;
   startupTimeoutSec?: number;
   enabled?: boolean;
 }
 
 export interface ManifestServer extends Server {
   agents?: Agent[];
-  scope?: "global" | "project";
 }
 
 export type ServerMap = Record<string, ManifestServer>;
 
+// The global manifest has servers and presets. A project manifest has
+// servers only.
 export interface Manifest {
   version: 1;
   servers: ServerMap;
-  projects: Record<string, ServerMap>;
+  presets?: Record<string, ServerMap>;
 }
 
 export function isAgent(value: string): value is Agent {

@@ -32,8 +32,7 @@ export function fromCodex(raw: unknown): Server | null {
     return compact({
       transport: "http",
       url: raw.url,
-      headers: codexHeaders(raw.http_headers, raw.env_http_headers),
-      bearerTokenEnvVar: typeof raw.bearer_token_env_var === "string" ? raw.bearer_token_env_var : undefined,
+      headers: codexHeaders(raw.http_headers, raw.env_http_headers, raw.bearer_token_env_var),
       enabled,
     });
   }
@@ -42,7 +41,7 @@ export function fromCodex(raw: unknown): Server | null {
       transport: "stdio",
       command: raw.command,
       args: Array.isArray(raw.args) ? raw.args.map(String) : undefined,
-      env: stringRecord(raw.env),
+      env: codexEnv(raw.env, raw.env_vars),
       cwd: typeof raw.cwd === "string" ? raw.cwd : undefined,
       startupTimeoutSec: typeof raw.startup_timeout_sec === "number" ? raw.startup_timeout_sec : undefined,
       enabled,
@@ -93,27 +92,35 @@ export function renderCodexServer(name: string, server: Server): string {
   if (server.transport === "stdio") {
     lines.push(`command = ${tomlString(server.command ?? "")}`);
     if (server.args?.length) lines.push(`args = ${tomlArray(server.args)}`);
+    const forwarded = Object.entries(server.env ?? {})
+      .filter(([key, value]) => value === `\${${key}}`)
+      .map(([key]) => key);
+    if (forwarded.length) lines.push(`env_vars = ${tomlArray(forwarded)}`);
     if (server.cwd) lines.push(`cwd = ${tomlString(server.cwd)}`);
     if (server.startupTimeoutSec != null) lines.push(`startup_timeout_sec = ${Number(server.startupTimeoutSec)}`);
   } else {
     lines.push(`url = ${tomlString(server.url ?? "")}`);
     const literal: Record<string, string> = {};
     const fromEnv: Record<string, string> = {};
+    let bearer: string | undefined;
     for (const [key, value] of Object.entries(server.headers ?? {})) {
       const variable = value.match(/^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/)?.[1];
-      if (variable) fromEnv[key] = variable;
+      const token = key.toLowerCase() === "authorization" ? value.match(/^Bearer \$\{([A-Za-z_][A-Za-z0-9_]*)\}$/)?.[1] : undefined;
+      if (token) bearer = token;
+      else if (variable) fromEnv[key] = variable;
       else literal[key] = value;
     }
+    if (bearer) lines.push(`bearer_token_env_var = ${tomlString(bearer)}`);
     if (Object.keys(literal).length) lines.push(`http_headers = ${tomlInlineTable(literal)}`);
     if (Object.keys(fromEnv).length) lines.push(`env_http_headers = ${tomlInlineTable(fromEnv)}`);
-    if (server.bearerTokenEnvVar) lines.push(`bearer_token_env_var = ${tomlString(server.bearerTokenEnvVar)}`);
   }
   if (server.enabled === false) lines.push("enabled = false");
 
   const blocks = [lines.join("\n")];
-  if (server.transport === "stdio" && server.env && Object.keys(server.env).length) {
+  const literalEnv = Object.entries(server.env ?? {}).filter(([key, value]) => value !== `\${${key}}`);
+  if (server.transport === "stdio" && literalEnv.length) {
     const envLines = [`[${header}.env]`];
-    for (const [key, value] of Object.entries(server.env)) envLines.push(`${tomlKey(key)} = ${tomlString(value)}`);
+    for (const [key, value] of literalEnv) envLines.push(`${tomlKey(key)} = ${tomlString(value)}`);
     blocks.push(envLines.join("\n"));
   }
   return blocks.join("\n\n");
@@ -235,12 +242,24 @@ function tomlInlineTable(record: Record<string, string>): string {
   return `{ ${Object.entries(record).map(([key, value]) => `${tomlKey(key)} = ${tomlString(value)}`).join(", ")} }`;
 }
 
-// Codex keeps literal headers and env-sourced headers apart. The manifest
-// writes the second kind as `${VAR}`, like the JSON agents.
-function codexHeaders(literal: unknown, fromEnv: unknown): Record<string, string> | undefined {
+// Codex keeps literal headers, env-sourced headers, and the bearer token
+// apart. The manifest writes them all as headers with ${VAR} references, like
+// the JSON agents.
+function codexHeaders(literal: unknown, fromEnv: unknown, bearer: unknown): Record<string, string> | undefined {
   const headers = { ...stringRecord(literal) };
+  if (typeof bearer === "string" && bearer) headers.Authorization = `Bearer \${${bearer}}`;
   for (const [key, variable] of Object.entries(stringRecord(fromEnv) ?? {})) headers[key] = `\${${variable}}`;
   return Object.keys(headers).length ? headers : undefined;
+}
+
+// Codex forwards variables listed in env_vars from its own environment. The
+// manifest spells that as NAME: "${NAME}".
+function codexEnv(env: unknown, forwarded: unknown): Record<string, string> | undefined {
+  const out = { ...stringRecord(env) };
+  for (const name of Array.isArray(forwarded) ? forwarded : []) {
+    if (typeof name === "string") out[name] = `\${${name}}`;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 function stringRecord(value: unknown): Record<string, string> | undefined {

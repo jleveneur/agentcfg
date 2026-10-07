@@ -1,6 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileExists } from "./files.ts";
 import type { Agent } from "./types.ts";
 
 export interface Context {
@@ -40,10 +41,31 @@ export function locations(ctx: Context) {
     vscodeUser: join(appConfigDir(ctx, "Code"), "User", "mcp.json"),
     windsurf: join(home, ".codeium", "windsurf", "mcp_config.json"),
     gemini: join(home, ".gemini", "settings.json"),
+    globalManifest:
+      env.AGENTCFG_CONFIG || join(env.XDG_CONFIG_HOME || join(home, ".config"), "agentcfg", MANIFEST_NAME),
     stateDir:
       env.AGENTCFG_STATE_DIR ||
       (env.XDG_STATE_HOME ? join(env.XDG_STATE_HOME, "agentcfg") : join(home, ".local", "state", "agentcfg")),
   };
+}
+
+export const MANIFEST_NAME = "agentcfg.json";
+
+// The project manifest is the nearest agentcfg.json in the directory or its
+// parents, like git finds .git. The home directory and the global manifest
+// are never taken for a project.
+export async function findProjectManifest(start: string, ctx: Context): Promise<string | null> {
+  const home = resolve(ctx.home);
+  const global = resolve(locations(ctx).globalManifest);
+  let dir = resolve(start);
+  while (dir !== home) {
+    const file = join(dir, MANIFEST_NAME);
+    if (file !== global && (await fileExists(file))) return file;
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+  return null;
 }
 
 export type Locations = ReturnType<typeof locations>;
