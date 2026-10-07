@@ -1,6 +1,6 @@
 {
   "name": "@jleveneur/agentcfg",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "One MCP config for Cursor, Claude Code, Codex, VS Code, Gemini CLI, and Windsurf, plus a scan of every MCP server on the machine.",
   "keywords": [
     "ai-agents",
