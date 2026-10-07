@@ -1,11 +1,10 @@
 #!/usr/bin/env node
-import { run } from "./cli.ts";
+import { run } from "./cli.ts"
 
-run(process.argv.slice(2))
-  .then((code) => {
-    if (code) process.exitCode = code;
-  })
-  .catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : error);
-    process.exitCode = 1;
-  });
+try {
+  const code = await run(process.argv.slice(2))
+  if (code) process.exitCode = code
+} catch (error) {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+  process.exitCode = 1
+}

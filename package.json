@@ -1,34 +1,81 @@
 {
-  "name": "agentcfg",
+  "name": "@jleveneur/agentcfg",
   "version": "0.1.0",
-  "description": "One MCP manifest for Cursor, Claude Code, and Codex, plus a scan of every MCP server on the machine.",
-  "type": "module",
+  "description": "One MCP config for Cursor, Claude Code, Codex, VS Code, Gemini CLI, and Windsurf, plus a scan of every MCP server on the machine.",
+  "keywords": [
+    "ai-agents",
+    "claude-code",
+    "cli",
+    "codex",
+    "cursor",
+    "gemini-cli",
+    "mcp",
+    "model-context-protocol",
+    "vscode",
+    "windsurf"
+  ],
+  "homepage": "https://github.com/jleveneur/agentcfg#readme",
+  "bugs": {
+    "url": "https://github.com/jleveneur/agentcfg/issues"
+  },
+  "license": "MIT",
+  "author": "Julien Leveneur",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jleveneur/agentcfg.git"
+  },
   "bin": {
     "agentcfg": "./dist/bin.js"
   },
-  "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc -p tsconfig.json",
-    "test": "node --test test/*.test.ts",
-    "test:unit": "node --test test/agentcfg.test.ts test/scan.test.ts",
-    "test:live": "node --test test/live.test.ts",
-    "prepack": "npm run build"
-  },
-  "engines": {
-    "node": ">=22.18"
-  },
-  "license": "MIT",
   "files": [
     "dist",
-    "agentcfg.example.json",
+    "agentcfg.schema.json",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "node --eval \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "oxlint --type-aware",
+    "lint:fix": "oxlint --type-aware --fix",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "test": "node --test test/*.test.ts",
+    "test:unit": "node --test test/agentcfg.test.ts test/scan.test.ts test/status.test.ts",
+    "test:live": "node --test test/live.test.ts",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:unit",
+    "prepare": "node scripts/install-hooks.ts",
+    "prepack": "pnpm build"
+  },
   "dependencies": {
     "smol-toml": "1.9.0"
   },
   "devDependencies": {
+    "@commitlint/cli": "21.2.3",
+    "@commitlint/config-conventional": "21.2.3",
+    "@commitlint/types": "21.2.3",
     "@types/node": "24.19.1",
+    "lefthook": "2.1.14",
+    "oxfmt": "0.61.0",
+    "oxlint": "1.85.0",
+    "oxlint-tsgolint": "7.0.2001",
     "typescript": "7.0.2"
-  }
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "24.19.0",
+      "onFail": "download"
+    }
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "packageManager": "pnpm@12.3.0"
 }

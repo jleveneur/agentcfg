@@ -1,0 +1,6 @@
+# Install-time scripts are opt-in. Each entry is a deliberate answer.
+allowBuilds:
+  # lefthook's postinstall runs `lefthook install -f`. The `prepare` script does
+  # the same job without an install-time code-execution grant, and skips `-f`
+  # so a local hook is not clobbered.
+  lefthook: false

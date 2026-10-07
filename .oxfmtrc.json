@@ -1,0 +1,17 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxfmt/configuration_schema.json",
+  "printWidth": 100,
+  "semi": false,
+  "singleQuote": false,
+  "trailingComma": "none",
+  "arrowParens": "always",
+  "bracketSpacing": true,
+  "endOfLine": "lf",
+  "tabWidth": 2,
+  "useTabs": false,
+  "sortImports": {
+    "newlinesBetween": true,
+    "groups": ["side_effect", "builtin", "external", ["parent", "sibling", "index"], "unknown"]
+  },
+  "ignorePatterns": ["**/dist/**", "**/node_modules/**", "pnpm-lock.yaml", "local-backup/**"]
+}

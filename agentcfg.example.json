@@ -1,5 +1,7 @@
 {
+  "$schema": "https://unpkg.com/@jleveneur/agentcfg/agentcfg.schema.json",
   "version": 1,
+  "agents": ["cursor", "claude", "codex", "vscode"],
   "servers": {
     "docs": {
       "transport": "http",

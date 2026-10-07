@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpkg.com/@jleveneur/agentcfg/agentcfg.schema.json",
+  "title": "agentcfg manifest",
+  "description": "MCP servers that agentcfg writes into each agent's config. The global manifest lives in ~/.config/agentcfg/agentcfg.json; a project one at the project root.",
+  "type": "object",
+  "required": ["version", "servers"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 1 },
+    "agents": {
+      "description": "The agent files this manifest writes to. Defaults to cursor, claude, and codex.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/agent" }
+    },
+    "servers": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Za-z0-9_.-]+$" },
+      "additionalProperties": { "$ref": "#/$defs/server" }
+    }
+  },
+  "$defs": {
+    "agent": { "enum": ["cursor", "claude", "codex", "vscode", "gemini"] },
+    "variables": {
+      "description": "Reference secrets as ${NAME}; agentcfg writes each agent's own syntax.",
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "server": {
+      "type": "object",
+      "required": ["transport"],
+      "properties": {
+        "transport": { "enum": ["stdio", "http", "sse"] },
+        "agents": {
+          "description": "Limit this server to some of the manifest's agents.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/agent" }
+        },
+        "enabled": { "type": "boolean" }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "transport": { "const": "stdio" },
+            "command": { "type": "string", "minLength": 1 },
+            "args": { "type": "array", "items": { "type": "string" } },
+            "env": { "$ref": "#/$defs/variables" },
+            "cwd": { "type": "string" },
+            "startupTimeoutSec": { "type": "number", "exclusiveMinimum": 0 },
+            "agents": true,
+            "enabled": true
+          },
+          "required": ["command"],
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "transport": { "enum": ["http", "sse"] },
+            "url": { "type": "string", "format": "uri" },
+            "headers": { "$ref": "#/$defs/variables" },
+            "agents": true,
+            "enabled": true
+          },
+          "required": ["url"],
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

@@ -1,25 +1,26 @@
-import { basename } from "node:path";
-import { isRecord } from "./files.ts";
-import type { Agent, Server, ServerMap } from "./types.ts";
+import { basename } from "node:path"
+
+import { isRecord } from "./files.ts"
+import type { Server, ServerMap } from "./types.ts"
 
 // Reads one server entry from any JSON-based config: Cursor, Claude Code,
 // Claude Desktop, VS Code, Windsurf, Gemini, and plugin .mcp.json files.
 export function fromJsonServer(raw: unknown): Server | null {
-  if (!isRecord(raw)) return null;
-  const server = readJsonServer(raw);
-  return server && mapStrings(server, fromCursorVars);
+  if (!isRecord(raw)) return null
+  const server = readJsonServer(raw)
+  return server && mapStrings(server, fromEnvVars)
 }
 
 function readJsonServer(raw: Record<string, unknown>): Server | null {
-  const enabled = raw.disabled === true || raw.enabled === false ? false : undefined;
-  const url = firstString(raw.url, raw.serverUrl, raw.httpUrl);
+  const enabled = raw.disabled === true || raw.enabled === false ? false : undefined
+  const url = firstString(raw.url, raw.serverUrl, raw.httpUrl)
   if (url) {
     return compact({
       transport: raw.type === "sse" ? "sse" : "http",
       url,
       headers: stringRecord(raw.headers),
-      enabled,
-    });
+      enabled
+    })
   }
   if (typeof raw.command === "string") {
     return compact({
@@ -28,89 +29,55 @@ function readJsonServer(raw: Record<string, unknown>): Server | null {
       args: stringArray(raw.args),
       env: stringRecord(raw.env),
       cwd: typeof raw.cwd === "string" ? raw.cwd : undefined,
-      enabled,
-    });
+      enabled
+    })
   }
-  return null;
+  return null
 }
 
 export function fromJsonServers(raw: unknown): ServerMap {
-  const servers: ServerMap = {};
-  if (!isRecord(raw)) return servers;
+  const servers: ServerMap = {}
+  if (!isRecord(raw)) return servers
   for (const [name, entry] of Object.entries(raw)) {
-    const server = fromJsonServer(entry);
-    if (server) servers[name] = server;
+    const server = fromJsonServer(entry)
+    if (server) servers[name] = server
   }
-  return servers;
+  return servers
 }
 
-export function toCursor(server: Server): Record<string, unknown> {
-  const out = mapStrings(server, toCursorVars);
-  if (out.transport === "stdio") {
-    return compact({ command: out.command, args: out.args, env: out.env });
-  }
-  return compact({ url: out.url, headers: out.headers });
-}
+// Cursor and VS Code only expand ${env:NAME}, plus a few names of their own
+// such as ${workspaceFolder}. Claude Code, Gemini, and the manifest use ${NAME}.
+const EDITOR_BUILTINS = new Set([
+  "userHome",
+  "workspaceFolder",
+  "workspaceFolderBasename",
+  "pathSeparator"
+])
 
-// Cursor only expands ${env:NAME}, plus a few names of its own such as
-// ${workspaceFolder}. Claude Code and the manifest use ${NAME}.
-const CURSOR_BUILTINS = new Set(["userHome", "workspaceFolder", "workspaceFolderBasename", "pathSeparator"]);
-
-export function toCursorVars(value: string): string {
+export function toEnvVars(value: string): string {
   return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (match, name: string) =>
-    CURSOR_BUILTINS.has(name) ? match : `\${env:${name}}`,
-  );
+    EDITOR_BUILTINS.has(name) ? match : `\${env:${name}}`
+  )
 }
 
-function fromCursorVars(value: string): string {
-  return value.replace(/\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => `\${${name}}`);
+function fromEnvVars(value: string): string {
+  return value.replace(
+    /\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g,
+    (_match, name: string) => `\${${name}}`
+  )
 }
 
-function mapStrings(server: Server, map: (value: string) => string): Server {
+export function mapStrings(server: Server, map: (value: string) => string): Server {
   const record = (value?: Record<string, string>) =>
-    value && Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, map(entry)]));
+    value && Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, map(entry)]))
   return compact({
     ...server,
     url: server.url && map(server.url),
     command: server.command && map(server.command),
     args: server.args?.map(map),
     env: record(server.env),
-    headers: record(server.headers),
-  });
-}
-
-export function toClaude(server: Server): Record<string, unknown> {
-  if (server.transport === "stdio") {
-    return compact({ command: server.command, args: server.args, env: server.env });
-  }
-  return compact({ type: server.transport, url: server.url, headers: server.headers });
-}
-
-// The part of a server an agent's file format can hold. Diffing on anything
-// more would report drift that a sync can never fix.
-export function forAgent(server: Server, agent: Agent): Server {
-  if (agent === "codex") {
-    return compact({
-      transport: server.transport === "sse" ? "http" : server.transport,
-      url: server.url,
-      headers: server.transport === "stdio" ? undefined : server.headers,
-      command: server.command,
-      args: server.args,
-      env: server.transport === "stdio" ? server.env : undefined,
-      cwd: server.cwd,
-      startupTimeoutSec: server.startupTimeoutSec,
-      enabled: server.enabled === false ? false : undefined,
-    });
-  }
-  const sse = agent === "claude" && server.transport === "sse";
-  return compact({
-    transport: server.transport === "stdio" ? "stdio" : sse ? "sse" : "http",
-    url: server.url,
-    headers: server.transport === "stdio" ? undefined : server.headers,
-    command: server.command,
-    args: server.args,
-    env: server.transport === "stdio" ? server.env : undefined,
-  });
+    headers: record(server.headers)
+  })
 }
 
 export function signature(server: Server): string {
@@ -123,148 +90,167 @@ export function signature(server: Server): string {
     headers: sortKeys(server.headers),
     enabled: server.enabled !== false,
     cwd: server.cwd ?? null,
-    startupTimeoutSec: server.startupTimeoutSec ?? null,
-  });
+    startupTimeoutSec: server.startupTimeoutSec ?? null
+  })
 }
 
 export function sameServer(left: Server, right: Server): boolean {
-  return signature(left) === signature(right);
+  return signature(left) === signature(right)
 }
 
 // A key that says "this is the same MCP server" even when two configs spell
 // it differently: tracking query params dropped, `npx -y pkg@latest` and
 // `pnpm dlx pkg` folded together.
 export function identity(server: Server): string {
-  if (server.url) return normalizeUrl(server.url);
-  const tokens = [server.command ?? "", ...(server.args ?? [])];
-  const runner = basename(tokens[0] ?? "");
-  let rest: string[] | null = null;
-  if (["npx", "bunx", "pnpx"].includes(runner)) rest = tokens.slice(1);
-  else if (["pnpm", "yarn", "bun"].includes(runner) && ["dlx", "x"].includes(tokens[1] ?? "")) rest = tokens.slice(2);
-  else if (runner === "uvx") rest = tokens.slice(1);
+  if (server.url) return normalizeUrl(server.url)
+  const tokens = [server.command ?? "", ...(server.args ?? [])]
+  const runner = basename(tokens[0] ?? "")
+  let rest: string[] | null = null
+  if (["npx", "bunx", "pnpx"].includes(runner)) rest = tokens.slice(1)
+  else if (["pnpm", "yarn", "bun"].includes(runner) && ["dlx", "x"].includes(tokens[1] ?? ""))
+    rest = tokens.slice(2)
+  else if (runner === "uvx") rest = tokens.slice(1)
   if (rest) {
-    const [pkg = "", ...after] = dropLeadingFlags(rest);
-    return ["pkg:" + stripVersion(pkg), ...after].join(" ").trim();
+    const [pkg = "", ...after] = dropLeadingFlags(rest)
+    return ["pkg:" + stripVersion(pkg), ...after].join(" ").trim()
   }
-  return [runner, ...tokens.slice(1)].join(" ").trim();
+  return [runner, ...tokens.slice(1)].join(" ").trim()
 }
 
 export function normalizeUrl(raw: string): string {
   try {
-    const url = new URL(raw);
-    for (const key of [...url.searchParams.keys()]) {
-      if (/^utm_/i.test(key)) url.searchParams.delete(key);
+    const url = new URL(raw)
+    for (const key of Array.from(url.searchParams.keys())) {
+      if (/^utm_/i.test(key)) url.searchParams.delete(key)
     }
-    url.hash = "";
-    url.username = "";
-    url.password = "";
-    const path = url.pathname.replace(/\/+$/, "");
-    const query = url.searchParams.toString();
-    return `${url.protocol}//${url.host.toLowerCase()}${path}${query ? `?${query}` : ""}`;
+    url.hash = ""
+    url.username = ""
+    url.password = ""
+    const path = url.pathname.replace(/\/+$/, "")
+    const query = url.searchParams.toString()
+    return `${url.protocol}//${url.host.toLowerCase()}${path}${query ? `?${query}` : ""}`
   } catch {
-    return raw;
+    return raw
   }
 }
 
 export function secretFields(server: Server): string[] {
-  const fields: string[] = [];
+  const fields: string[] = []
   for (const [key, value] of Object.entries(server.env ?? {})) {
-    if (isLiteralSecret(value)) fields.push(`env.${key}`);
+    if (isLiteralSecret(value)) fields.push(`env.${key}`)
   }
   for (const [key, value] of Object.entries(server.headers ?? {})) {
-    if (isLiteralSecret(value)) fields.push(`headers.${key}`);
+    if (isLiteralSecret(value)) fields.push(`headers.${key}`)
   }
-  return fields;
+  return fields
 }
 
 // A value is safe to store when its secret part comes from a variable:
 // `${TOKEN}`, `$TOKEN`, or `Bearer ${TOKEN}`.
 export function isLiteralSecret(value: unknown): boolean {
-  if (typeof value !== "string" || value.length === 0) return false;
-  if (/^\$[A-Za-z_][A-Za-z0-9_]*$/.test(value)) return false;
-  if (!/\$\{(env:)?[A-Za-z_][A-Za-z0-9_]*\}/.test(value)) return true;
-  const rest = value.replace(/\$\{(env:)?[A-Za-z_][A-Za-z0-9_]*\}/g, "").trim();
-  return !["", "Bearer", "Token", "Basic"].includes(rest);
+  if (typeof value !== "string" || value.length === 0) return false
+  if (/^\$[A-Za-z_][A-Za-z0-9_]*$/.test(value)) return false
+  if (!/\$\{(env:)?[A-Za-z_][A-Za-z0-9_]*\}/.test(value)) return true
+  const rest = value.replace(/\$\{(env:)?[A-Za-z_][A-Za-z0-9_]*\}/g, "").trim()
+  return !["", "Bearer", "Token", "Basic"].includes(rest)
 }
 
-const SECRET_NAME = /key|token|secret|passw|auth|bearer|cookie|sig/i;
-export const REDACTED = "<redacted>";
+const SECRET_NAME = /key|token|secret|passw|auth|bearer|cookie|sig/i
+export const REDACTED = "<redacted>"
 
 // Safe to print or write to a report: env and header values, credential-like
 // query params and arguments are masked unless they reference a variable.
-export function redact(server: Server): Server {
-  const mask = (record?: Record<string, string>) =>
+function mask(record?: Record<string, string>): Record<string, string> | undefined {
+  return (
     record &&
-    Object.fromEntries(Object.entries(record).map(([key, value]) => [key, isLiteralSecret(value) ? REDACTED : value]));
+    Object.fromEntries(
+      Object.entries(record).map(([key, value]) => [key, isLiteralSecret(value) ? REDACTED : value])
+    )
+  )
+}
+
+export function redact(server: Server): Server {
   return compact({
     ...server,
     url: server.url && redactUrl(server.url),
     env: mask(server.env),
     headers: mask(server.headers),
-    args: server.args && redactArgs(server.args),
-  });
+    args: server.args && redactArgs(server.args)
+  })
 }
 
 function redactUrl(raw: string): string {
   try {
-    const url = new URL(raw);
+    const url = new URL(raw)
     if (url.username || url.password) {
-      url.username = REDACTED;
-      url.password = "";
+      url.username = REDACTED
+      url.password = ""
     }
-    for (const key of [...url.searchParams.keys()]) {
-      if (SECRET_NAME.test(key)) url.searchParams.set(key, REDACTED);
+    for (const key of Array.from(url.searchParams.keys())) {
+      if (SECRET_NAME.test(key)) url.searchParams.set(key, REDACTED)
     }
-    return url.toString().replaceAll(encodeURIComponent(REDACTED), REDACTED);
+    return url.toString().replaceAll(encodeURIComponent(REDACTED), REDACTED)
   } catch {
-    return raw;
+    return raw
   }
 }
 
 function redactArgs(args: string[]): string[] {
   return args.map((arg, index) => {
-    const inline = arg.match(/^(--?[\w-]+)=(.*)$/);
-    if (inline && SECRET_NAME.test(inline[1] ?? "") && isLiteralSecret(inline[2])) return `${inline[1]}=${REDACTED}`;
-    const previous = args[index - 1];
-    if (previous && /^--?[\w-]+$/.test(previous) && SECRET_NAME.test(previous) && isLiteralSecret(arg)) return REDACTED;
-    if (/^(sk|pk|rk|ghp|gho|github_pat|xox[abp]|glpat)[-_][A-Za-z0-9_-]{8,}/.test(arg)) return REDACTED;
-    return arg;
-  });
+    const inline = arg.match(/^(--?[\w-]+)=(.*)$/)
+    if (inline && SECRET_NAME.test(inline[1] ?? "") && isLiteralSecret(inline[2]))
+      return `${inline[1]}=${REDACTED}`
+    const previous = args[index - 1]
+    if (
+      previous &&
+      /^--?[\w-]+$/.test(previous) &&
+      SECRET_NAME.test(previous) &&
+      isLiteralSecret(arg)
+    )
+      return REDACTED
+    if (/^(sk|pk|rk|ghp|gho|github_pat|xox[abp]|glpat)[-_][A-Za-z0-9_-]{8,}/.test(arg))
+      return REDACTED
+    return arg
+  })
 }
 
 function dropLeadingFlags(tokens: string[]): string[] {
-  let index = 0;
-  while (index < tokens.length && tokens[index]?.startsWith("-")) index += 1;
-  return tokens.slice(index);
+  let index = 0
+  while (index < tokens.length && tokens[index]?.startsWith("-")) index += 1
+  return tokens.slice(index)
 }
 
 function stripVersion(pkg: string): string {
-  const at = pkg.lastIndexOf("@");
-  return at > 0 ? pkg.slice(0, at) : pkg.replace(/==.*$/, "");
+  const at = pkg.lastIndexOf("@")
+  return at > 0 ? pkg.slice(0, at) : pkg.replace(/==.*$/, "")
 }
 
 function firstString(...values: unknown[]): string | undefined {
-  return values.find((value): value is string => typeof value === "string" && value.length > 0);
+  return values.find((value): value is string => typeof value === "string" && value.length > 0)
 }
 
 function stringArray(value: unknown): string[] | undefined {
-  return Array.isArray(value) ? value.map(String) : undefined;
+  return Array.isArray(value) ? value.map(String) : undefined
 }
 
 function stringRecord(value: unknown): Record<string, string> | undefined {
-  if (!isRecord(value)) return undefined;
-  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, String(entry)]));
+  if (!isRecord(value)) return undefined
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, String(entry)]))
 }
 
 function sortKeys(record?: Record<string, string>): Record<string, string> {
-  return Object.fromEntries(Object.entries(record ?? {}).sort(([a], [b]) => a.localeCompare(b)));
+  return Object.fromEntries(Object.entries(record ?? {}).toSorted(([a], [b]) => a.localeCompare(b)))
 }
 
 export function compact<const T extends Record<string, unknown>>(value: T): T {
+  // Dropping empty fields keeps every declared field's type.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   return Object.fromEntries(
     Object.entries(value).filter(
       ([, entry]) =>
-        entry != null && !(Array.isArray(entry) && entry.length === 0) && !(isRecord(entry) && Object.keys(entry).length === 0),
-    ),
-  ) as T;
+        entry != null &&
+        !(Array.isArray(entry) && entry.length === 0) &&
+        !(isRecord(entry) && Object.keys(entry).length === 0)
+    )
+  ) as T
 }

@@ -1,0 +1,49 @@
+name: Release
+
+# Push a tag such as v0.2.0, made by `npm version`, to publish that version.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    # Must match the environment named in the npm trusted publisher settings.
+    environment: npm
+    permissions:
+      # The GitHub release.
+      contents: write
+      # npm trusted publishing: npm exchanges the workflow's OIDC token for a
+      # one-time publish token, so no npm token is stored in the repository.
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          cache: true
+          install: false
+      - run: pnpm install --frozen-lockfile
+
+      - name: Check the tag matches package.json
+        run: |
+          version="v$(node -p 'require("./package.json").version')"
+          if [ "$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json $version" >&2
+            exit 1
+          fi
+
+      - run: pnpm check
+
+      # npm 11.5.1 or newer speaks trusted publishing, and attaches a
+      # provenance attestation on its own.
+      - run: npm --version
+      - run: npm publish --access public
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes

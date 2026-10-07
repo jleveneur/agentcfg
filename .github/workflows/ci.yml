@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A new push makes the previous run's answer irrelevant. `main` is exempt so the
+# post-merge record stays complete.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Installs pnpm (from `packageManager`) and Node (from
+      # `devEngines.runtime`), and caches the store.
+      - uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          cache: true
+          install: false
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test:unit
+      - run: pnpm build
+
+      # Pull requests are squash-merged, so the title becomes the commit
+      # message and has to satisfy commitlint.
+      - name: Lint PR title
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: echo "$TITLE" | pnpm exec commitlint
+
+  test:
+    name: Test (${{ matrix.os }})
+    # Paths and app folders differ per OS: Claude Desktop and VS Code live in
+    # ~/Library on macOS and %APPDATA% on Windows.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          cache: true
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:unit
+
+  package:
+    name: Package on Node 22
+    # The published package promises Node 22.13. Build with the toolchain, then
+    # install the tarball the way a user would and run it on the oldest Node.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          cache: true
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm pack --pack-destination "$RUNNER_TEMP"
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.13.0
+
+      - name: Install and run the tarball
+        working-directory: ${{ runner.temp }}
+        run: |
+          node --version
+          npm install --global ./jleveneur-agentcfg-*.tgz
+          agentcfg --version
+          agentcfg --help
+          agentcfg scan

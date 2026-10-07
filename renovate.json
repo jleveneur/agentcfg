@@ -1,0 +1,90 @@
+// Dependency update policy.
+//
+// JSONC so the reasoning lives next to the rule. Default posture: everything
+// auto-merges once CI is green. Only the cases where a green CI run is *not*
+// evidence of safety are carved out below.
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+
+  "extends": [
+    "config:recommended",
+    // One tracking issue listing everything pending, and the gate that majors
+    // wait behind.
+    ":dependencyDashboard",
+    // Commit messages must satisfy commitlint, which the commit-msg hook and
+    // the PR title both enforce.
+    ":semanticCommits",
+    // A workflow runs with repository permissions, so a mutable ref is a
+    // supply-chain hole.
+    "helpers:pinGitHubActionDigests"
+  ],
+
+  "timezone": "Europe/Paris",
+  "schedule": ["before 6am on monday"],
+
+  // Exact versions everywhere: a range means CI and production can resolve
+  // differently.
+  "rangeStrategy": "pin",
+
+  // Supply-chain delay: most malicious releases are found and yanked within a
+  // couple of days. Security updates override this.
+  "minimumReleaseAge": "3 days",
+
+  "prConcurrentLimit": 8,
+  "postUpdateOptions": ["pnpmDedupe"],
+
+  "automerge": true,
+  "automergeType": "pr",
+  "platformAutomerge": true,
+
+  "lockFileMaintenance": { "enabled": true, "automerge": true },
+
+  // Known advisories bypass the schedule and the release-age delay: the
+  // exposure window is worse than the risk the delay protects against.
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "schedule": ["at any time"],
+    "minimumReleaseAge": null,
+    "labels": ["security", "priority: high"]
+  },
+
+  "packageRules": [
+    {
+      // engines is a floor, not a selection. The global "pin" strategy would
+      // rewrite ">=24.0.0" to the newest published Node, contradicting
+      // devEngines.runtime and packageManager and failing every job with
+      // ERR_PNPM_UNSUPPORTED_ENGINE.
+      "matchDepTypes": ["engines"],
+      "rangeStrategy": "replace"
+    },
+    {
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "groupName": "dev dependencies"
+    },
+    {
+      // Type definitions travel with the library they describe, and splitting
+      // them produces a PR that cannot pass typecheck on its own.
+      "matchPackageNames": ["@types/**"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "groupName": "type definitions"
+    },
+    {
+      // tsgolint is built against a specific TypeScript release, so the two
+      // move together, and a TypeScript minor routinely surfaces new type
+      // errors in existing code.
+      "matchPackageNames": ["typescript", "oxlint-tsgolint", "oxlint", "oxfmt"],
+      "groupName": "typescript toolchain",
+      "automerge": false
+    },
+    {
+      // Reviewed on their own terms, and released from the dashboard rather
+      // than opened automatically.
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "dependencyDashboardApproval": true,
+      "labels": ["dependencies", "major"],
+      "minimumReleaseAge": "14 days"
+    }
+  ]
+}
