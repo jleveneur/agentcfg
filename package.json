@@ -25,7 +25,7 @@
     "url": "git+https://github.com/jleveneur/agentcfg.git"
   },
   "bin": {
-    "agentcfg": "./dist/bin.js"
+    "agentcfg": "dist/bin.js"
   },
   "files": [
     "dist",
@@ -36,8 +36,7 @@
   ],
   "type": "module",
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "scripts": {
     "build": "node --eval \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
