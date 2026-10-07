@@ -37,10 +37,21 @@ jobs:
           fi
 
       - run: pnpm check
+      # Built before npm reads package.json, so it finds the bin file.
+      - run: pnpm build
 
-      # npm 11.5.1 or newer speaks trusted publishing, and attaches a
-      # provenance attestation on its own.
-      - run: npm --version
+      # pnpm/setup gives pnpm its Node but leaves the runner's own npm on PATH,
+      # and that npm (10.x) cannot do trusted publishing. npm 11.5.1 or newer
+      # exchanges the workflow's OIDC token and attaches provenance on its own.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+
+      - name: Check npm supports trusted publishing
+        run: |
+          npm --version
+          node -e 'const [a, b, c] = process.argv[1].split(".").map(Number); process.exit(a > 11 || (a === 11 && (b > 5 || (b === 5 && c >= 1))) ? 0 : 1)' "$(npm --version)"
+
       - run: npm publish --access public
 
       - name: Create the GitHub release
