@@ -4,13 +4,12 @@ One MCP manifest for Cursor, Claude Code, and Codex.
 
 Each agent stores MCP servers in its own file:
 
-| Agent | File |
-| --- | --- |
-| Cursor | `~/.cursor/mcp.json` |
-| Claude Code | `~/.claude/.claude.json` |
-| Codex | `~/.codex/config.toml` |
+| Scope | Cursor | Claude Code | Codex |
+| --- | --- | --- | --- |
+| Global | `~/.cursor/mcp.json` | `~/.claude/.claude.json` | `~/.codex/config.toml` |
+| Project | `.cursor/mcp.json` | `.mcp.json` | `.codex/config.toml` |
 
-`agentcfg` keeps a single `agentcfg.json` and writes those files from it.
+`agentcfg` keeps one `agentcfg.json`. Global servers go in `servers`. Project servers go in `projects`, keyed by the project path.
 
 ```json
 {
@@ -34,14 +33,14 @@ Each agent stores MCP servers in its own file:
 ## Commands
 
 ```bash
-node bin/agentcfg.js import --home "$HOME"
+node bin/agentcfg.js import
 node bin/agentcfg.js diff
-node bin/agentcfg.js sync
+node bin/agentcfg.js sync --prune
 ```
 
-`import` reads the three configs and writes `agentcfg.json`. Servers that disagree across agents are left out until you pass `--prefer cursor`, `--prefer claude`, or `--prefer codex`.
+`import` reads the global configs and every project directory in `~/Developments`. Pass `--projects` to scan somewhere else, or `--no-projects` to stay global. A server that already exists globally, including `reui` at `https://mcp.reui.io/api/mcp`, is kept once as the global server `https://mcp.reui.io`.
 
-`sync` adds or updates the servers from the manifest. Servers that already exist only inside an agent stay there. `--prune` removes those extras. Servers shipped by the Codex or ChatGPT app are kept either way.
+`sync` writes each server back to the agents and scope it belongs to. Servers that already exist only inside an agent stay there. `--prune` removes those extras from the files the manifest covers. Servers shipped by the Codex or ChatGPT app are kept either way.
 
 Literal env values and headers are not copied into the manifest. Declare them as `${ENV_NAME}` yourself.
 

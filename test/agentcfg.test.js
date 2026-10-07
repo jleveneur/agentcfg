@@ -113,7 +113,7 @@ test("import skips secrets and app-managed servers, and reports conflicts", asyn
   );
 
   const manifest = join(home, "agentcfg.json");
-  const imported = await run(["import", "--home", home, "--manifest", manifest]);
+  const imported = await run(["import", "--home", home, "--manifest", manifest, "--no-projects"]);
   assert.equal(imported.code, 2, imported.stderr);
   assert.match(imported.stderr, /keyed/);
   assert.match(imported.stderr, /node_repl/);
@@ -124,7 +124,7 @@ test("import skips secrets and app-managed servers, and reports conflicts", asyn
   assert.equal(written.servers.node_repl, undefined);
   assert.equal(await readFile(manifest, "utf8").then((text) => text.includes("sk-live-secret")), false);
 
-  const preferred = await run(["import", "--home", home, "--manifest", manifest, "--prefer", "cursor"]);
+  const preferred = await run(["import", "--home", home, "--manifest", manifest, "--no-projects", "--prefer", "cursor"]);
   assert.equal(preferred.code, 0, preferred.stderr);
   const chosen = JSON.parse(await readFile(manifest, "utf8"));
   assert.equal(chosen.servers.docs.url, "https://example.com/mcp");
@@ -157,4 +157,76 @@ test("prune removes extra user servers and keeps managed codex servers", async (
   const codex = await readFile(join(home, ".codex", "config.toml"), "utf8");
   assert.doesNotMatch(codex, /mcp_servers\.old/);
   assert.match(codex, /mcp_servers\.node_repl/);
+});
+
+test("import keeps reui global and project servers in their projects", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentcfg-scope-"));
+  const home = join(root, "home");
+  const projects = join(root, "projects");
+  const app = join(projects, "hydromag");
+  const dimension = join(projects, "dimension");
+  await mkdir(join(home, ".cursor"), { recursive: true });
+  await mkdir(join(home, ".codex"), { recursive: true });
+  await mkdir(join(app, ".cursor"), { recursive: true });
+  await mkdir(join(dimension, ".cursor"), { recursive: true });
+  await mkdir(join(dimension), { recursive: true });
+  await writeFile(
+    join(home, ".cursor", "mcp.json"),
+    JSON.stringify({ mcpServers: { reui: { url: "https://mcp.reui.io" } } }),
+  );
+  await writeFile(join(home, ".codex", "config.toml"), `[mcp_servers.reui]\nurl = "https://mcp.reui.io/api/mcp"\n`);
+  await writeFile(
+    join(app, ".cursor", "mcp.json"),
+    JSON.stringify({
+      mcpServers: {
+        reui: { url: "https://mcp.reui.io/api/mcp" },
+        "next-devtools": { command: "pnpm", args: ["dlx", "next-devtools-mcp@latest"] },
+      },
+    }),
+  );
+  await writeFile(
+    join(dimension, ".mcp.json"),
+    JSON.stringify({
+      mcpServers: {
+        linear: { type: "http", url: "https://mcp.linear.app/mcp" },
+      },
+    }),
+  );
+  await writeFile(
+    join(dimension, ".cursor", "mcp.json"),
+    JSON.stringify({
+      mcpServers: {
+        shadcn: { command: "npx", args: ["-y", "shadcn@latest", "mcp"] },
+        linear: { url: "https://mcp.linear.app/mcp" },
+      },
+    }),
+  );
+
+  const manifest = join(root, "agentcfg.json");
+  const imported = await run(["import", "--home", home, "--projects", projects, "--manifest", manifest]);
+  assert.equal(imported.code, 0, imported.stderr);
+  assert.match(imported.stderr, /hydromag: reui matches the global server/);
+  const written = JSON.parse(await readFile(manifest, "utf8"));
+  assert.equal(written.servers.reui.url, "https://mcp.reui.io");
+  assert.equal(written.servers.reui.scope, "global");
+  assert.deepEqual(written.servers.reui.agents.sort(), ["codex", "cursor"]);
+  assert.equal(written.projects[app].reui, undefined);
+  assert.equal(written.projects[app]["next-devtools"].command, "pnpm");
+  assert.equal(written.projects[dimension].shadcn.command, "npx");
+  assert.deepEqual(written.projects[dimension].linear.agents.sort(), ["claude", "cursor"]);
+
+  const synced = await run(["sync", "--prune", "--home", home, "--manifest", manifest]);
+  assert.equal(synced.code, 0, synced.stderr);
+  const globalCursor = JSON.parse(await readFile(join(home, ".cursor", "mcp.json"), "utf8"));
+  assert.equal(globalCursor.mcpServers.reui.url, "https://mcp.reui.io");
+  assert.equal(globalCursor.mcpServers["next-devtools"], undefined);
+  const codex = await readFile(join(home, ".codex", "config.toml"), "utf8");
+  assert.match(codex, /url = "https:\/\/mcp\.reui\.io"\n/);
+  assert.doesNotMatch(codex, /api\/mcp/);
+  const appCursor = JSON.parse(await readFile(join(app, ".cursor", "mcp.json"), "utf8"));
+  assert.equal(appCursor.mcpServers.reui, undefined);
+  assert.equal(appCursor.mcpServers["next-devtools"].command, "pnpm");
+  const dimensionClaude = JSON.parse(await readFile(join(dimension, ".mcp.json"), "utf8"));
+  assert.equal(dimensionClaude.mcpServers.linear.url, "https://mcp.linear.app/mcp");
+  assert.equal(dimensionClaude.mcpServers.shadcn, undefined);
 });

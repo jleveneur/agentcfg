@@ -4,7 +4,8 @@
     "docs": {
       "transport": "http",
       "url": "https://example.com/mcp",
-      "agents": ["cursor", "claude", "codex"]
+      "agents": ["cursor", "claude", "codex"],
+      "scope": "global"
     },
     "local-tools": {
       "transport": "stdio",
