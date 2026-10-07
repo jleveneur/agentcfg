@@ -2,9 +2,17 @@ import { fileURLToPath } from "node:url"
 
 import { errorMessage, fileExists, isRecord } from "./files.ts"
 
+// What Cursor's state database says about plugins and projects.
+export interface CursorState {
+  installs: CursorInstalls
+  // Folders opened in Cursor, most recent first: its "Open Recent" list,
+  // then every workspace it recorded plugins for.
+  workspaces: string[]
+}
+
 // Which Cursor plugins are installed, by Cursor's own record: the
-// cursor.plugins.installedIds.* keys of its state database. "user" holds
-// installs that apply everywhere; the other keys are workspace paths.
+// cursor.plugins.installedIds.* keys. "user" holds installs that apply
+// everywhere; the other keys are workspace paths.
 export interface CursorInstalls {
   user: string[]
   workspaces: Record<string, { id: string; fromProject: boolean }[]>
@@ -44,7 +52,7 @@ async function loadSqlite(): Promise<DatabaseConstructor | null> {
   }
 }
 
-export async function readCursorInstalls(file: string): Promise<CursorInstalls | null> {
+export async function readCursorState(file: string): Promise<CursorState | null> {
   if (!(await fileExists(file))) return null
   const DatabaseSync = await loadSqlite()
   if (!DatabaseSync) return null
@@ -53,7 +61,9 @@ export async function readCursorInstalls(file: string): Promise<CursorInstalls |
     const db = new DatabaseSync(file, { readOnly: true })
     try {
       rows = db
-        .prepare("select key, value from ItemTable where key like 'cursor.plugins.installedIds.%'")
+        .prepare(
+          "select key, value from ItemTable where key like 'cursor.plugins.installedIds.%' or key = 'history.recentlyOpenedPathsList'"
+        )
         .all()
     } finally {
       db.close()
@@ -61,7 +71,27 @@ export async function readCursorInstalls(file: string): Promise<CursorInstalls |
   } catch (error) {
     throw new Error(`could not read ${file}: ${errorMessage(error)}`, { cause: error })
   }
-  return parseInstalls(rows.filter(isRow))
+  const valid = rows.filter(isRow)
+  const recent = valid.find((row) => row.key === "history.recentlyOpenedPathsList")
+  const installs = parseInstalls(valid.filter((row) => row.key !== recent?.key))
+  const workspaces = [...parseRecent(recent?.value), ...Object.keys(installs.workspaces)]
+  return { installs, workspaces: [...new Set(workspaces)] }
+}
+
+// {"entries":[{"folderUri":"file:///..."}, {"workspace":{"configPath":...}}]}
+export function parseRecent(value: string | undefined): string[] {
+  if (!value) return []
+  let data: unknown
+  try {
+    data = JSON.parse(value)
+  } catch {
+    return []
+  }
+  const entries = isRecord(data) && Array.isArray(data.entries) ? data.entries : []
+  return entries.flatMap((entry) => {
+    if (!isRecord(entry) || typeof entry.folderUri !== "string") return []
+    return entry.folderUri.startsWith("file://") ? [fileURLToPath(entry.folderUri)] : []
+  })
 }
 
 function isRow(value: unknown): value is Row {

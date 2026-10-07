@@ -43,7 +43,9 @@ https://mcp.linear.app/mcp  (linear)
   cursor  plugin   linear  installed for every project        ~/.cursor/plugins/cache/cursor-public/linear/…/plugin.json
 ```
 
-It covers user and project files for every agent above plus Claude Desktop, Windsurf, and Devin Desktop; Claude Code's private per-project servers; the servers in Cursor, Claude Code, and Codex plugins, with where each plugin is turned on; and the servers Cursor loaded that no file defines any more. Projects come from `--projects DIR`, the current directory, and the projects Claude Code and Codex already know. Secrets are masked. `--json` prints the full report.
+It covers user and project files for every agent above plus Claude Desktop, Windsurf, and Devin Desktop; Claude Code's private per-project servers; the servers in Cursor, Claude Code, and Codex plugins, with where each plugin is turned on; and the servers Cursor loaded that no file defines, such as ones an IDE extension adds.
+
+Projects come from `--projects DIR`, the current directory, and the projects Claude Code, Codex, and Cursor already know, so a plain `agentcfg scan` usually finds them all. Cursor keeps a snapshot of the servers it loaded in each workspace until you open that workspace again; entries left there by servers you removed since are counted apart, and `--all` lists them. Secrets are masked. `--json` prints the full report.
 
 ## Keep two manifests
 

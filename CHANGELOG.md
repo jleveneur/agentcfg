@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0
+
+- `scan` finds projects through Cursor's list of opened folders, so it no longer needs `--projects` to see projects that only Cursor knows. Temporary folders that other tools open Cursor in are left out.
+- `scan` tells live servers that Cursor loaded but no file defines, such as ones an IDE extension adds, from leftovers of servers removed since a workspace was last opened. Leftovers are counted apart and listed with `--all`, each with the date Cursor last loaded it.
+
+## 0.1.2
+
+- Releases are published from GitHub Actions with npm trusted publishing and a provenance attestation.
+
 ## 0.1.0
 
 First release on npm, as `@jleveneur/agentcfg`.

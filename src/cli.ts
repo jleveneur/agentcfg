@@ -65,7 +65,7 @@ export async function run(argv: string[], io: IO = defaultIO): Promise<number> {
       io.stdout(
         parsed.json
           ? JSON.stringify({ ...result, groups: groupFindings(result.findings) }, null, 2)
-          : formatScan(result, ctx.home)
+          : formatScan(result, ctx.home, { all: parsed.all })
       )
       return 0
     }
@@ -197,6 +197,7 @@ interface Parsed {
   prune: boolean
   dryRun: boolean
   json: boolean
+  all: boolean
   help: boolean
   version: boolean
 }
@@ -209,6 +210,7 @@ const FLAGS: Record<string, keyof Parsed> = {
   "--prune": "prune",
   "--dry-run": "dryRun",
   "--json": "json",
+  "--all": "all",
   "--help": "help",
   "-h": "help",
   "--version": "version",
@@ -238,6 +240,7 @@ function parseArgs(argv: string[]): Parsed {
     prune: false,
     dryRun: false,
     json: false,
+    all: false,
     help: false,
     version: false
   }
@@ -285,7 +288,7 @@ function helpText(): string {
   return `agentcfg ${version()} — one MCP config for Cursor, Claude Code, Codex, VS Code, and Gemini CLI
 
 Usage:
-  agentcfg scan   [--projects DIR] [--json]
+  agentcfg scan   [--projects DIR] [--all] [--json]
   agentcfg status [--json]
   agentcfg init   [--global] [--agent LIST] [--force]
   agentcfg add    NAME URL [--header 'KEY: VALUE'] [--transport sse] [--agent LIST] [--global] [--force]
@@ -304,6 +307,9 @@ writes to cursor, claude, and codex unless its "agents" list says otherwise;
 vscode and gemini are also supported.
 
 scan     lists every MCP server on this machine, plugins included. Read-only.
+         Projects come from --projects, the current directory, and the ones
+         Claude Code, Codex, and Cursor know. --all also lists what Cursor
+         kept from servers removed since.
 status   asks the cursor-agent, claude, and codex CLIs which servers are ready,
          need a login, or wait for approval.
 init     creates an empty manifest. --agent picks the agents it writes to.

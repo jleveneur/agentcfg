@@ -193,7 +193,7 @@ void test("scan finds files, private project servers, plugins, and what Cursor l
   )
 
   const text = await run(["scan", "--home", home, "--projects", projects])
-  assert.match(text.stdout, /user-reui\s+no longer in ~\/\.cursor\/mcp\.json\s+1 workspace/)
+  assert.match(text.stdout, /user-reui\s+not in ~\/\.cursor\/mcp\.json\s+1 workspace\s+last loaded/)
   assert.match(text.stdout, /pkg:shadcn mcp {2}\(shadcn\)/)
 })
 
@@ -295,4 +295,81 @@ void test("the JSON schema lists the same agents and fields as the code", async 
     "servers",
     "version"
   ])
+})
+
+void test("scan finds projects through Cursor and sets aside what it kept from removed servers", async (t) => {
+  const sqlite = await import("node:sqlite").catch(() => null)
+  if (!sqlite) {
+    t.skip("node:sqlite is not available")
+    return
+  }
+  const root = await mkdtemp(join(tmpdir(), "agentcfg-cursor-recent-"))
+  const home = join(root, "home")
+  const app = join(home, "code", "app")
+  await put(join(app, ".cursor", "mcp.json"), {
+    mcpServers: { docs: { url: "https://docs.example/mcp" } }
+  })
+  await put(join(home, ".cursor", "mcp.json"), { mcpServers: {} })
+
+  const file = locations(createContext({ home })).cursorState
+  await mkdir(dirname(file), { recursive: true })
+  const db = new sqlite.DatabaseSync(file)
+  db.exec("create table ItemTable (key text unique on conflict replace, value blob)")
+  db.prepare("insert into ItemTable (key, value) values (?, ?)").run(
+    "history.recentlyOpenedPathsList",
+    JSON.stringify({ entries: [{ folderUri: url(app) }, { folderUri: url(join(root, "gone")) }] })
+  )
+  db.close()
+
+  // Cursor loaded two servers in the app: one from a plugin since removed,
+  // one an extension added. And one in a temporary folder another tool opened.
+  const snapshot = join(home, ".cursor", "projects", cursorSlug(app), "mcps")
+  await put(join(snapshot, "plugin-gone-gone", "SERVER_METADATA.json"), {
+    serverIdentifier: "plugin-gone-gone",
+    serverName: "gone"
+  })
+  await put(join(snapshot, "user-ext-extension-Tool", "SERVER_METADATA.json"), {
+    serverIdentifier: "user-ext-extension-Tool",
+    serverName: "Tool"
+  })
+  const temporary = join(home, ".cursor", "projects", "var-folders-xy-T-tool-123", "mcps")
+  await put(join(temporary, "user-ext-extension-Tool", "SERVER_METADATA.json"), {
+    serverIdentifier: "user-ext-extension-Tool",
+    serverName: "Tool"
+  })
+  // A user server Cursor loaded before ~/.cursor/mcp.json last changed.
+  const old = join(snapshot, "user-reui")
+  await put(join(old, "SERVER_METADATA.json"), {
+    serverIdentifier: "user-reui",
+    serverName: "reui"
+  })
+  await utimes(old, new Date("2026-01-01"), new Date("2026-01-01"))
+
+  const result = await run(["scan", "--home", home, "--json"])
+  assert.equal(result.code, 0, result.stderr)
+  const report = JSON.parse(result.stdout) as {
+    projects: string[]
+    findings: { agent: string; scope: string; name: string; project?: string }[]
+    loadedOnly: { id: string; stale: boolean; workspaces: string[] }[]
+  }
+  assert.deepEqual(report.projects, [app])
+  assert.ok(
+    report.findings.some((f) => f.agent === "cursor" && f.scope === "project" && f.name === "docs")
+  )
+  const entry = (id: string) => report.loadedOnly.find((item) => item.id === id)
+  assert.deepEqual(entry("user-ext-extension-Tool"), {
+    ...entry("user-ext-extension-Tool"),
+    stale: false,
+    workspaces: [app]
+  })
+  assert.equal(entry("plugin-gone-gone")?.stale, true)
+  assert.equal(entry("user-reui")?.stale, true)
+
+  const text = await run(["scan", "--home", home])
+  assert.match(text.stdout, /user-ext-extension-Tool +added by an IDE extension +1 workspace/)
+  assert.doesNotMatch(text.stdout, /plugin-gone-gone/)
+  assert.match(text.stdout, /2 more entries in Cursor's workspace snapshots/)
+  const all = await run(["scan", "--home", home, "--all"])
+  assert.match(all.stdout, /plugin-gone-gone +from a removed or updated plugin/)
+  assert.match(all.stdout, /user-reui +removed from ~\/\.cursor\/mcp\.json/)
 })

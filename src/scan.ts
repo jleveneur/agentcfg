@@ -1,10 +1,11 @@
 import { readdir, stat } from "node:fs/promises"
-import { basename, join, resolve } from "node:path"
+import { tmpdir } from "node:os"
+import { basename, join, resolve, sep } from "node:path"
 
 import { isManagedServer, parseToml, readCodexServers } from "./codex-toml.ts"
-import { type CursorInstalls, readCursorInstalls } from "./cursor-state.ts"
+import { type CursorInstalls, type CursorState, readCursorState } from "./cursor-state.ts"
 import { errorMessage, fileExists, isRecord, readJson, readText } from "./files.ts"
-import { type Context, discoverProjects, locations } from "./paths.ts"
+import { type Context, discoverProjects, type Locations, locations } from "./paths.ts"
 import { fromJsonServers, identity, redact } from "./servers.ts"
 import type { Server, ServerMap } from "./types.ts"
 
@@ -37,6 +38,11 @@ export interface LoadedOnly {
   name: string
   origin: "user" | "project" | "plugin" | "extension"
   workspaces: string[]
+  // When Cursor last wrote this server into a workspace's snapshot.
+  lastSeen: string
+  // Cursor last loaded it before its config file changed or its plugin went
+  // away: a leftover in a workspace not opened since, not a live server.
+  stale: boolean
 }
 
 export interface ScanResult {
@@ -144,13 +150,21 @@ export async function scan(options: ScanOptions): Promise<ScanResult> {
   // Project files. Projects come from --projects, the current directory, and
   // the projects Claude Code and Codex already know about.
   const codexProjects = isRecord(codexConfig.projects) ? Object.keys(codexConfig.projects) : []
+  let cursorState: CursorState | null = null
+  try {
+    cursorState = await readCursorState(paths.cursorState)
+  } catch (error) {
+    warnings.push(`cursor: ${errorMessage(error)}`)
+  }
   // The home directory is not a project: its .cursor/mcp.json is the user file.
   const projects = (
     await existingDirs([
       ...(await discoverProjects(options.projects)),
       ...(options.cwd ? [options.cwd] : []),
       ...Object.keys(claudeProjects),
-      ...codexProjects
+      ...codexProjects,
+      // Cursor also records the temporary folders other tools open it in.
+      ...(cursorState?.workspaces ?? []).filter((dir) => !isTemporary(dir, options.ctx.home))
     ])
   ).filter((dir) => dir !== resolve(options.ctx.home))
   const cursorProjectPlugins = new Map<string, string[]>()
@@ -227,15 +241,11 @@ export async function scan(options: ScanOptions): Promise<ScanResult> {
     }
   })
 
-  let installs: CursorInstalls | null = null
-  try {
-    installs = await readCursorInstalls(paths.cursorState)
-  } catch (error) {
-    warnings.push(`cursor: ${errorMessage(error)}`)
-  }
-  const cursorInstalls = installs
+  const cursorInstalls = cursorState?.installs ?? null
+  const cachedPlugins: CursorPlugin[] = []
   await safely("cursor plugins", async () => {
     const plugins = await cursorPlugins(paths.cursorPlugins)
+    cachedPlugins.push(...plugins)
     const known = new Set(plugins.flatMap((plugin) => plugin.ids))
     for (const plugin of plugins) {
       const installedIn = cursorInstallsFor(plugin, cursorInstalls, cursorProjectPlugins)
@@ -271,16 +281,18 @@ export async function scan(options: ScanOptions): Promise<ScanResult> {
     }
   }
 
-  // What Cursor actually loaded, per workspace.
-  const loaded = await cursorLoaded(paths.cursorProjects)
+  // What Cursor actually loaded, per workspace. Temporary folders, such as
+  // the ones other tools open Cursor in, are left out.
   const slugs = new Map(projects.map((project) => [cursorSlug(project), project]))
+  const loaded = await cursorLoaded(paths.cursorProjects, new Set(slugs.keys()))
+  const place = (slug: string) => slugs.get(slug) ?? slug
   const matched = new Set<string>()
   for (const finding of findings) {
     if (finding.agent !== "cursor") continue
     const id = cursorServerId(finding)
-    const workspaces = loaded.get(id)?.workspaces
-    if (workspaces) matched.add(id)
-    finding.loadedIn = (workspaces ?? []).map((slug) => slugs.get(slug) ?? slug)
+    const seen = loaded.get(id)?.seen
+    if (seen) matched.add(id)
+    finding.loadedIn = (seen ?? []).map((entry) => place(entry.slug))
     // Without Cursor's own install record, fall back on what it loaded.
     if (finding.scope === "plugin" && !finding.installedIn) {
       const enabledBy = cursorProjectPlugins.get(finding.plugin ?? "") ?? []
@@ -290,17 +302,22 @@ export async function scan(options: ScanOptions): Promise<ScanResult> {
   const loadedOnly: LoadedOnly[] = []
   for (const [id, entry] of loaded) {
     if (matched.has(id) || id.startsWith("cursor-")) continue
+    const origin = id.includes("-extension-")
+      ? "extension"
+      : id.startsWith("plugin-")
+        ? "plugin"
+        : id.startsWith("project-")
+          ? "project"
+          : "user"
+    const lastSeen = Math.max(...entry.seen.map((item) => item.mtime))
+    const changed = await definitionChanged(id, origin, { paths, projects, plugins: cachedPlugins })
     loadedOnly.push({
       id,
       name: entry.name,
-      origin: id.includes("-extension-")
-        ? "extension"
-        : id.startsWith("plugin-")
-          ? "plugin"
-          : id.startsWith("project-")
-            ? "project"
-            : "user",
-      workspaces: entry.workspaces.map((slug) => slugs.get(slug) ?? slug)
+      origin,
+      workspaces: entry.seen.map((item) => place(item.slug)),
+      lastSeen: new Date(lastSeen).toISOString(),
+      stale: changed != null && changed > lastSeen
     })
   }
 
@@ -431,21 +448,82 @@ function cursorInstallsFor(
   return [...out]
 }
 
-async function cursorLoaded(
-  projectsDir: string
-): Promise<Map<string, { name: string; workspaces: string[] }>> {
-  const loaded = new Map<string, { name: string; workspaces: string[] }>()
-  for (const workspace of await childDirs(projectsDir)) {
-    for (const dir of await childDirs(join(workspace, "mcps"))) {
-      const meta = await readJsonOrEmpty(join(dir, "SERVER_METADATA.json"))
-      const id = typeof meta.serverIdentifier === "string" ? meta.serverIdentifier : basename(dir)
-      const name = typeof meta.serverName === "string" ? meta.serverName : id
-      const entry = loaded.get(id) ?? { name, workspaces: [] }
-      entry.workspaces.push(basename(workspace))
-      loaded.set(id, entry)
-    }
+interface Loaded {
+  name: string
+  seen: { slug: string; mtime: number }[]
+}
+
+// Cursor rewrites ~/.cursor/projects/<workspace>/mcps each time it opens the
+// workspace, one folder per server it loaded.
+async function cursorLoaded(projectsDir: string, known: Set<string>): Promise<Map<string, Loaded>> {
+  const loaded = new Map<string, Loaded>()
+  const workspaces = (await childDirs(projectsDir)).filter(
+    (dir) => known.has(basename(dir)) || !isTemporarySlug(basename(dir))
+  )
+  const servers = await Promise.all(
+    workspaces.map(async (workspace) => {
+      const dirs = await childDirs(join(workspace, "mcps"))
+      return Promise.all(
+        dirs.map(async (dir) => ({
+          workspace,
+          dir,
+          meta: await readJsonOrEmpty(join(dir, "SERVER_METADATA.json")),
+          mtime: (await stat(dir)).mtimeMs
+        }))
+      )
+    })
+  )
+  for (const { workspace, dir, meta, mtime } of servers.flat()) {
+    const id = typeof meta.serverIdentifier === "string" ? meta.serverIdentifier : basename(dir)
+    const name = typeof meta.serverName === "string" ? meta.serverName : id
+    const entry = loaded.get(id) ?? { name, seen: [] }
+    entry.seen.push({ slug: basename(workspace), mtime })
+    loaded.set(id, entry)
   }
   return loaded
+}
+
+// When the config that would define a loaded server last changed: the user
+// or project mcp.json, or the plugin's cached version. Infinity when the
+// project file or the whole plugin is gone, null when it cannot be told.
+async function definitionChanged(
+  id: string,
+  origin: LoadedOnly["origin"],
+  context: { paths: Locations; projects: string[]; plugins: CursorPlugin[] }
+): Promise<number | null> {
+  if (origin === "extension") return null
+  if (origin === "user") return modifiedAt(context.paths.cursorMcp)
+  if (origin === "project") {
+    const project = context.projects.find((dir) => id.startsWith(`project-0-${basename(dir)}-`))
+    return project ? ((await modifiedAt(join(project, ".cursor", "mcp.json"))) ?? Infinity) : null
+  }
+  const plugin = context.plugins.find((entry) => id.startsWith(`plugin-${entry.name}-`))
+  return plugin ? modifiedAt(plugin.dir) : Infinity
+}
+
+async function modifiedAt(file: string): Promise<number | null> {
+  try {
+    return (await stat(file)).mtimeMs
+  } catch {
+    return null
+  }
+}
+
+const TEMPORARY = [
+  /^\/(private\/)?var\/folders\//,
+  /^\/(private\/)?tmp\//,
+  /[\\/]AppData[\\/]Local[\\/]Temp[\\/]/i
+]
+
+// Folders under the home directory count as real even inside the system temp
+// folder, which is where --home points in tests.
+function isTemporary(dir: string, home: string): boolean {
+  if (dir.startsWith(`${resolve(home)}${sep}`)) return false
+  return TEMPORARY.some((pattern) => pattern.test(dir)) || dir.startsWith(`${tmpdir()}${sep}`)
+}
+
+function isTemporarySlug(slug: string): boolean {
+  return /^(private-)?(var-folders|tmp)-|AppData-Local-Temp-/i.test(slug)
 }
 
 function cursorServerId(finding: Finding): string {

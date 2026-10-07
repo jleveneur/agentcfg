@@ -2,7 +2,7 @@ import { basename } from "node:path"
 
 import type { DiffRow } from "./commands.ts"
 import { tildify } from "./paths.ts"
-import { type Finding, groupFindings, type ScanResult } from "./scan.ts"
+import { type Finding, groupFindings, type LoadedOnly, type ScanResult } from "./scan.ts"
 import { type State, STATUS_AGENTS, type StatusAgent, type StatusReport } from "./status.ts"
 import type { Server } from "./types.ts"
 
@@ -20,7 +20,35 @@ export function formatDiff(rows: DiffRow[]): string {
     .join("\n")
 }
 
-export function formatScan(result: ScanResult, home: string): string {
+const LIVE_REASON: Record<LoadedOnly["origin"], string> = {
+  extension: "added by an IDE extension",
+  user: "not in ~/.cursor/mcp.json",
+  project: "not in the project's .cursor/mcp.json",
+  plugin: "not in the plugin's current version"
+}
+
+const STALE_REASON: Record<LoadedOnly["origin"], string> = {
+  extension: "added by an IDE extension",
+  user: "removed from ~/.cursor/mcp.json",
+  project: "removed from the project's .cursor/mcp.json",
+  plugin: "from a removed or updated plugin"
+}
+
+function loadedRow(entry: LoadedOnly, reasons: Record<LoadedOnly["origin"], string>): string[] {
+  const count = entry.workspaces.length
+  return [
+    entry.id,
+    reasons[entry.origin],
+    `${count} workspace${count === 1 ? "" : "s"}`,
+    `last loaded ${new Date(entry.lastSeen).toLocaleDateString("en-CA")}`
+  ]
+}
+
+export function formatScan(
+  result: ScanResult,
+  home: string,
+  options: { all?: boolean } = {}
+): string {
   const groups = groupFindings(result.findings)
   const repeated = groups.filter((group) => group.findings.length > 1).length
   const lines = [
@@ -40,19 +68,24 @@ export function formatScan(result: ScanResult, home: string): string {
     lines.push(...table(rows).map((line) => `  ${line}`))
   }
 
-  if (result.loadedOnly.length) {
+  const live = result.loadedOnly.filter((entry) => !entry.stale)
+  const stale = result.loadedOnly.filter((entry) => entry.stale)
+  if (live.length) {
     lines.push("", "Loaded by Cursor, but no config file defines them:")
-    const rows = result.loadedOnly.map((entry) => [
-      entry.id,
-      {
-        extension: "added by an IDE extension",
-        user: "no longer in ~/.cursor/mcp.json",
-        project: "no longer in the project's .cursor/mcp.json",
-        plugin: "from a removed or older plugin"
-      }[entry.origin],
-      `${entry.workspaces.length} workspace${entry.workspaces.length === 1 ? "" : "s"}`
-    ])
-    lines.push(...table(rows).map((line) => `  ${line}`))
+    lines.push(
+      ...table(live.map((entry) => loadedRow(entry, LIVE_REASON))).map((line) => `  ${line}`)
+    )
+  }
+  if (stale.length && options.all) {
+    lines.push("", "Left over in Cursor's workspace snapshots, from servers removed since:")
+    lines.push(
+      ...table(stale.map((entry) => loadedRow(entry, STALE_REASON))).map((line) => `  ${line}`)
+    )
+  } else if (stale.length) {
+    lines.push(
+      "",
+      `${stale.length} more entr${stale.length === 1 ? "y" : "ies"} in Cursor's workspace snapshots ${stale.length === 1 ? "comes" : "come"} from servers removed since those workspaces were last opened. Cursor drops them when you reopen the workspace; agentcfg scan --all lists them.`
+    )
   }
 
   if (result.warnings.length)
