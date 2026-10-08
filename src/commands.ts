@@ -14,7 +14,14 @@ import {
   validateServer,
   writeManifest
 } from "./manifest.ts"
-import { type Context, findProjectManifest, findUp, locations, MANIFEST_NAME } from "./paths.ts"
+import {
+  type Context,
+  findProjectManifest,
+  findUp,
+  locations,
+  MANIFEST_NAME,
+  posix
+} from "./paths.ts"
 import { sameServer, secretFields } from "./servers.ts"
 import {
   type Agent,
@@ -234,7 +241,7 @@ export async function agentSource(options: CommandOptions) {
     const found = await findUp(options.dir, options.ctx, (dir) => format.projectFile(dir))
     if (!found) {
       throw new Error(
-        `No ${relative(options.dir, format.projectFile(options.dir))} in ${options.dir} or its parents.`
+        `No ${posix(relative(options.dir, format.projectFile(options.dir)))} in ${options.dir} or its parents.`
       )
     }
     scope = { kind: "project", label: basename(found.root), manifest: found.file, root: found.root }

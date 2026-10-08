@@ -112,6 +112,11 @@ export async function discoverProjects(directory: string | null | undefined): Pr
   }
 }
 
+// Paths read the same on every system in agentcfg's output.
+export function posix(path: string): string {
+  return path.replaceAll("\\", "/")
+}
+
 // Either separator, so Windows paths shorten too.
 export function tildify(path: string, home: string): string {
   if (path === home) return "~"

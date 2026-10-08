@@ -11,8 +11,8 @@ import {
   syncConfigs
 } from "./commands.ts"
 import { linkSkills } from "./link.ts"
-import { createContext, tildify } from "./paths.ts"
-import { formatDiff, formatScan, formatStatus, posix } from "./report.ts"
+import { createContext, posix, tildify } from "./paths.ts"
+import { formatDiff, formatScan, formatStatus } from "./report.ts"
 import { groupFindings, scan } from "./scan.ts"
 import { collectStatus } from "./status.ts"
 

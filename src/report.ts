@@ -1,7 +1,7 @@
 import { basename } from "node:path"
 
 import type { DiffRow } from "./commands.ts"
-import { tildify } from "./paths.ts"
+import { posix, tildify } from "./paths.ts"
 import { type Finding, groupFindings, type LoadedOnly, type ScanResult } from "./scan.ts"
 import type { SkillConflict, SkillGap, SkillLocation, SkillsReport } from "./skills.ts"
 import { type State, STATUS_AGENTS, type StatusAgent, type StatusReport } from "./status.ts"
@@ -326,11 +326,6 @@ function skillPlace(location: SkillLocation, home: string): string {
   if (location.scope === "plugin") return `plugin ${location.plugin ?? ""}`
   if (!location.project) return posix(tildify(location.dir, home))
   return posix(`${basename(location.project)}/${location.dir.slice(location.project.length + 1)}`)
-}
-
-// Paths read the same on every system in the report.
-export function posix(path: string): string {
-  return path.replaceAll("\\", "/")
 }
 
 // Claude Code only lacks .agents/skills, which agentcfg link fixes. Anything
