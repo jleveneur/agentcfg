@@ -160,7 +160,7 @@ export async function run(argv: string[], io: IO = defaultIO): Promise<number> {
       if (changed && !options.dryRun) {
         io.stdout(
           result.global
-            ? `Claude Code now sees the ${result.skills.length} skills in ~/.agents/skills. Run agentcfg link --global again after adding one.`
+            ? `Claude Code now sees the ${result.skills.length} skill${result.skills.length === 1 ? "" : "s"} in ~/.agents/skills. Run agentcfg link --global again after adding one.`
             : `Claude Code now sees the skills in .agents/skills. Commit .claude/skills so the rest of the team gets them too.`
         )
       }

@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url"
 
 import { parseInstalls } from "../src/cursor-state.ts"
 import { formatJson } from "../src/files.ts"
-import { createContext, locations } from "../src/paths.ts"
+import { createContext, locations, tildify } from "../src/paths.ts"
 import { cursorSlug } from "../src/scan.ts"
 import { identity, redact } from "../src/servers.ts"
 import { AGENTS } from "../src/types.ts"
@@ -198,6 +198,16 @@ void test("scan finds files, private project servers, plugins, and what Cursor l
 })
 
 const url = (path: string) => pathToFileURL(path).href
+
+void test("tildify shortens the home folder with either separator", () => {
+  assert.equal(tildify("/home/me/.claude/skills", "/home/me"), "~/.claude/skills")
+  assert.equal(
+    tildify(String.raw`C:\Users\me\.claude`, String.raw`C:\Users\me`),
+    String.raw`~\.claude`
+  )
+  assert.equal(tildify("/home/me", "/home/me"), "~")
+  assert.equal(tildify("/home/meow", "/home/me"), "/home/meow")
+})
 
 void test("parseInstalls splits user installs from each workspace's", () => {
   const web = process.platform === "win32" ? "C:\\code\\web" : "/code/web"

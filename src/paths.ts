@@ -99,6 +99,10 @@ export async function discoverProjects(directory: string | null | undefined): Pr
   }
 }
 
+// Either separator, so Windows paths shorten too.
 export function tildify(path: string, home: string): string {
-  return path === home || path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path
+  if (path === home) return "~"
+  return path.startsWith(`${home}/`) || path.startsWith(`${home}\\`)
+    ? `~${path.slice(home.length)}`
+    : path
 }
