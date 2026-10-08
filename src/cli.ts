@@ -55,7 +55,8 @@ export async function run(argv: string[], io: IO = defaultIO): Promise<number> {
     includeManaged: parsed.includeManaged,
     prune: parsed.prune,
     dryRun: parsed.dryRun,
-    force: parsed.force
+    force: parsed.force,
+    from: parsed.from
   }
   const would = options.dryRun ? "Would write" : "Wrote"
 
@@ -169,6 +170,7 @@ export async function run(argv: string[], io: IO = defaultIO): Promise<number> {
 
     case "diff": {
       const result = await diffConfigs(options)
+      for (const warning of result.warnings) io.stderr(warning)
       io.stdout(formatDiff(result.rows))
       return result.rows.some((row) => row.status === "missing" || row.status === "different")
         ? 1
@@ -177,6 +179,7 @@ export async function run(argv: string[], io: IO = defaultIO): Promise<number> {
 
     case "sync": {
       const result = await syncConfigs(options)
+      for (const warning of result.warnings) io.stderr(warning)
       io.stdout(formatDiff(result.rows))
       if (options.dryRun) {
         const extras = result.rows.filter((row) => row.status === "extra" && !row.managed)
@@ -221,6 +224,7 @@ interface Parsed {
   projects?: string
   manifest?: string
   prefer?: string
+  from?: string
   global: boolean
   force: boolean
   includeManaged: boolean
@@ -249,8 +253,9 @@ const FLAGS: Record<string, keyof Parsed> = {
 
 const VALUES: Record<
   string,
-  "home" | "project" | "projects" | "manifest" | "prefer" | "transport"
+  "home" | "project" | "projects" | "manifest" | "prefer" | "transport" | "from"
 > = {
+  "--from": "from",
   "--home": "home",
   "--project": "project",
   "--projects": "projects",
@@ -319,15 +324,15 @@ function helpText(): string {
 
 Usage:
   agentcfg scan   [--projects DIR] [--all] [--json]
-  agentcfg status [--json]
+  agentcfg status [--from AGENT] [--json]
   agentcfg init   [--global] [--agent LIST] [--force]
   agentcfg add    NAME URL [--header 'KEY: VALUE'] [--transport sse] [--agent LIST] [--global] [--force]
   agentcfg add    NAME [--env 'KEY=VALUE'] [--agent LIST] [--global] [--force] -- COMMAND ARGS...
   agentcfg remove NAME [--global]
   agentcfg link   [--global] [--dry-run]
   agentcfg import [--global] [--agent LIST] [--prefer AGENT] [--include-managed] [--force]
-  agentcfg diff   [--global] [--agent LIST]
-  agentcfg sync   [--global] [--agent LIST] [--prune] [--dry-run]
+  agentcfg diff   [--global] [--from AGENT] [--agent LIST]
+  agentcfg sync   [--global] [--from AGENT] [--agent LIST] [--prune] [--dry-run]
 
 Two manifests with the same shape:
   global   ~/.config/agentcfg/agentcfg.json: servers for every project
@@ -351,7 +356,9 @@ link     lets Claude Code see the skills in .agents/skills, the folder Codex,
          Cursor, Gemini CLI, and VS Code read: one .claude/skills link in a
          project, or one link per skill in ~/.claude/skills with --global.
 import   reads the agent files of the scope into its manifest.
-sync     writes the manifest into the agent files. Every changed file is first
+sync     writes the manifest into the agent files. With --from AGENT, that
+         agent's own file is the source instead, with no agentcfg.json:
+         --from claude reads .mcp.json (or ~/.claude.json with --global). Every changed file is first
          copied to ~/.local/state/agentcfg/backups.
 
 --agent LIST is a comma-separated list of cursor, claude, codex, vscode, gemini.

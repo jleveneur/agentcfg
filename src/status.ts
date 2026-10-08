@@ -1,11 +1,11 @@
 import { execFile } from "node:child_process"
 
 import { isManagedServer, parseToml } from "./codex-toml.ts"
-import { type CommandOptions, globalScope, projectScope } from "./commands.ts"
+import { agentSource, type CommandOptions, globalScope, projectScope } from "./commands.ts"
 import { errorMessage, isRecord, readText } from "./files.ts"
 import { agentsFor, MissingManifest, readManifest } from "./manifest.ts"
 import { findProjectManifest, locations } from "./paths.ts"
-import type { Agent, Manifest } from "./types.ts"
+import { type Agent, isAgent, type Manifest } from "./types.ts"
 
 // The agents whose CLI can report on their own servers.
 export const STATUS_AGENTS = ["cursor", "claude", "codex"] as const
@@ -175,12 +175,21 @@ export async function collectStatus(
   options: CommandOptions,
   env: NodeJS.ProcessEnv = process.env
 ): Promise<StatusReport> {
-  const projectFile = await findProjectManifest(options.dir, options.ctx)
-  const project = projectFile ? projectScope(projectFile) : null
+  // With --from, the project's servers come from that agent's file, and the
+  // source agent is expected to load them as well as its targets.
+  const fromSource = options.from ? await agentSource({ ...options, global: false }) : null
+  const projectFile = fromSource ? null : await findProjectManifest(options.dir, options.ctx)
+  const project = fromSource?.scope ?? (projectFile ? projectScope(projectFile) : null)
   const dir = project?.root ?? options.dir
+  const sourceManifest: Manifest | null = fromSource
+    ? {
+        ...fromSource.manifest,
+        agents: [fromSource.source, ...(fromSource.manifest.agents ?? [])].filter(isAgent)
+      }
+    : null
   const [global, local, ...reports] = await Promise.all([
     optionalManifest(globalScope(options).manifest),
-    projectFile ? optionalManifest(projectFile) : null,
+    sourceManifest ?? (projectFile ? optionalManifest(projectFile) : null),
     ...STATUS_AGENTS.map((agent) => report(agent, dir, env))
   ])
   const codexTrusted = project ? await isCodexTrusted(options, project.root) : null

@@ -63,12 +63,25 @@ export const MANIFEST_NAME = "agentcfg.json"
 // parents, like git finds .git. The home directory and the global manifest
 // are never taken for a project.
 export async function findProjectManifest(start: string, ctx: Context): Promise<string | null> {
-  const home = resolve(ctx.home)
   const global = resolve(locations(ctx).globalManifest)
+  const found = await findUp(start, ctx, (dir) => join(dir, MANIFEST_NAME), global)
+  return found?.file ?? null
+}
+
+// The nearest file that fileFor(dir) names, from start up to, not including,
+// the home directory: like git finding .git.
+export async function findUp(
+  start: string,
+  ctx: Context,
+  fileFor: (dir: string) => string,
+  skip?: string
+): Promise<{ file: string; root: string } | null> {
+  const home = resolve(ctx.home)
   let dir = resolve(start)
   while (dir !== home) {
-    const file = join(dir, MANIFEST_NAME)
-    if (file !== global && (await fileExists(file))) return file
+    const file = fileFor(dir)
+    // oxlint-disable-next-line no-await-in-loop
+    if (file !== skip && (await fileExists(file))) return { file, root: dir }
     const parent = dirname(dir)
     if (parent === dir) return null
     dir = parent

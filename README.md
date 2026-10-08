@@ -115,6 +115,19 @@ Commit both `agentcfg.json` and the files `sync` generates: anyone without agent
 
 `import` builds a manifest from existing agent files: `agentcfg import --global` for your user configs, `agentcfg import` inside a project. Servers with literal secrets are skipped, and servers written by the Codex or ChatGPT app are left out.
 
+### Without a manifest
+
+If you would rather not add a file, let one agent's own file be the source and the others follow it:
+
+```bash
+agentcfg sync --from claude              # .mcp.json → .cursor/mcp.json, .codex/config.toml
+agentcfg sync --from cursor --global     # ~/.cursor/mcp.json → ~/.claude.json, ~/.codex/config.toml
+agentcfg diff --from claude              # exit code 1 on drift, for CI or a git hook
+agentcfg status --from claude
+```
+
+The other agents among Cursor, Claude Code, and Codex are the targets; `--agent` picks others, such as `--agent cursor,codex,vscode`. The source file is found from the current directory up. Servers with a literal secret stay out, with a warning, and so do servers the Codex app manages. Every server goes to every target, since no agent's own format can say otherwise; keep an `agentcfg.json` for that. When one is in scope it stays the source, and `--from` is refused. Claude Code's `.mcp.json` makes the best source: it is plain JSON and tells HTTP from SSE.
+
 ### Secrets
 
 Write secrets as `${NAME}`, in single quotes on the command line so the shell leaves them alone. `add` refuses literal secrets. `sync` writes each agent's own syntax:

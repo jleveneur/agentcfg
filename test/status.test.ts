@@ -133,3 +133,31 @@ void test(
     assert.equal(report.rows.find((row) => row.name === "shadcn")?.cells.codex?.state, "missing")
   }
 )
+
+void test(
+  "status --from checks the servers of an agent's own file",
+  { skip: process.platform === "win32" },
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "agentcfg-status-from-"))
+    const home = join(root, "home")
+    const app = join(root, "web")
+    const bin = join(root, "bin")
+    await mkdir(bin)
+    const fake = async (name: string, output: string) => {
+      await writeFile(join(root, `${name}.out`), output)
+      await writeFile(join(bin, name), `#!/bin/sh\ncat "${join(root, `${name}.out`)}"\n`)
+      await chmod(join(bin, name), 0o755)
+    }
+    await fake("claude", "shadcn: pnpm dlx shadcn@latest mcp - ⏸ Pending approval\n")
+    await fake("cursor-agent", "shadcn: ready\n")
+    await fake("codex", "[]")
+    await put(join(app, ".mcp.json"), {
+      mcpServers: { shadcn: { command: "pnpm", args: ["dlx", "shadcn@latest", "mcp"] } }
+    })
+
+    const env = { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` }
+    const result = await run(["status", "--from", "claude", "--home", home], { cwd: app, env })
+    assert.match(result.stdout, /Project web/)
+    assert.match(result.stdout, /shadcn +project +ready +needs approval +not trusted/)
+  }
+)

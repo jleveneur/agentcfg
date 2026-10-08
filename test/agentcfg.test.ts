@@ -473,3 +473,93 @@ void test("a write that races another writer keeps both changes", async () => {
   assert.ok(calls >= 2)
   assert.deepEqual(JSON.parse(await readFile(file, "utf8")), { a: 1, b: 2, c: 3 })
 })
+
+void test("sync --from uses an agent's own file as the source, with no agentcfg.json", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentcfg-from-"))
+  const home = join(root, "home")
+  const app = join(root, "app")
+  await mkdir(join(app, "src", "pages"), { recursive: true })
+  await put(join(app, ".mcp.json"), {
+    mcpServers: {
+      docs: {
+        type: "http",
+        url: "https://docs.example/mcp",
+        headers: { Authorization: "Bearer ${DOCS_TOKEN}" }
+      },
+      leaky: { type: "http", url: "https://x.example/mcp", headers: { "X-Key": "abc123" } },
+      local: { command: "pnpm", args: ["dlx", "local-mcp"], env: { TOKEN: "${TOKEN}" } }
+    }
+  })
+
+  // Found from a subdirectory; the literal secret stays where it is.
+  const synced = await run(["sync", "--from", "claude", "--home", home], {
+    cwd: join(app, "src", "pages")
+  })
+  assert.equal(synced.code, 0, synced.stderr)
+  assert.match(synced.stderr, /left out leaky, which has a literal secret in headers\.X-Key/)
+  const cursor = await json(join(app, ".cursor", "mcp.json"))
+  assert.deepEqual(Object.keys(cursor.mcpServers), ["docs", "local"])
+  assert.equal(cursor.mcpServers.docs.headers.Authorization, "Bearer ${env:DOCS_TOKEN}")
+  const codex = await readFile(join(app, ".codex", "config.toml"), "utf8")
+  assert.match(codex, /bearer_token_env_var = "DOCS_TOKEN"/)
+  assert.match(codex, /env_vars = \["TOKEN"\]/)
+  assert.equal(await readFile(join(app, "agentcfg.json"), "utf8").catch(() => null), null)
+  assert.equal((await run(["diff", "--from", "claude", "--home", home], { cwd: app })).code, 0)
+
+  // A change in the source shows as drift until the next sync.
+  await put(join(app, ".mcp.json"), {
+    mcpServers: { docs: { type: "http", url: "https://docs.example/v2" } }
+  })
+  const drift = await run(["diff", "--from", "claude", "--home", home], { cwd: app })
+  assert.equal(drift.code, 1)
+  assert.match(drift.stdout, /cursor  docs  differs/)
+  const pruned = await run(["sync", "--from", "claude", "--prune", "--home", home], { cwd: app })
+  assert.match(pruned.stdout, /Removed cursor local, codex local/)
+
+  const vscode = await run(["sync", "--from", "claude", "--agent", "vscode", "--home", home], {
+    cwd: app
+  })
+  assert.equal(vscode.code, 0, vscode.stderr)
+  assert.equal((await json(join(app, ".vscode", "mcp.json"))).servers.docs.type, "http")
+  assert.match(
+    (
+      await run(["sync", "--from", "claude", "--agent", "claude,cursor", "--home", home], {
+        cwd: app
+      })
+    ).stderr,
+    /claude is the source/
+  )
+  assert.match(
+    (await run(["sync", "--from", "gemini", "--home", home], { cwd: app })).stderr,
+    /No \.gemini\/settings\.json in /
+  )
+
+  await put(join(app, "agentcfg.json"), { version: 1, servers: {} })
+  const refused = await run(["sync", "--from", "claude", "--home", home], { cwd: app })
+  assert.equal(refused.code, 1)
+  assert.match(refused.stderr, /agentcfg\.json is this project's source\. Drop --from/)
+})
+
+void test("sync --from --global copies one agent's user file to the others", async () => {
+  const home = await mkdtemp(join(tmpdir(), "agentcfg-from-global-"))
+  await put(join(home, ".cursor", "mcp.json"), {
+    mcpServers: { linear: { url: "https://mcp.linear.app/mcp" } }
+  })
+  await put(join(home, ".claude.json"), { userID: "keep-me" })
+  await put(join(home, ".codex", "config.toml"), 'model = "x"\n')
+
+  const synced = await run(["sync", "--global", "--from", "cursor", "--home", home])
+  assert.equal(synced.code, 0, synced.stderr)
+  const claude = await json(join(home, ".claude.json"))
+  assert.equal(claude.userID, "keep-me")
+  assert.deepEqual(claude.mcpServers.linear, { type: "http", url: "https://mcp.linear.app/mcp" })
+  assert.match(
+    await readFile(join(home, ".codex", "config.toml"), "utf8"),
+    /\[mcp_servers\.linear\]/
+  )
+
+  await put(globalManifest(home), { version: 1, servers: {} })
+  const refused = await run(["sync", "--global", "--from", "cursor", "--home", home])
+  assert.equal(refused.code, 1)
+  assert.match(refused.stderr, /is the source for global servers/)
+})

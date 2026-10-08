@@ -1,4 +1,4 @@
-import { basename, dirname, join, resolve } from "node:path"
+import { basename, dirname, join, relative, resolve } from "node:path"
 
 import { adapter, type Entry } from "./agents.ts"
 import { Backup } from "./backup.ts"
@@ -14,7 +14,7 @@ import {
   validateServer,
   writeManifest
 } from "./manifest.ts"
-import { type Context, findProjectManifest, locations, MANIFEST_NAME } from "./paths.ts"
+import { type Context, findProjectManifest, findUp, locations, MANIFEST_NAME } from "./paths.ts"
 import { sameServer, secretFields } from "./servers.ts"
 import {
   type Agent,
@@ -38,6 +38,8 @@ export interface CommandOptions {
   prune?: boolean
   dryRun?: boolean
   force?: boolean
+  // Use this agent's own file as the source instead of agentcfg.json.
+  from?: string
 }
 
 // One manifest and the agent files it manages: the home configs for the
@@ -196,17 +198,83 @@ export async function removeServer(options: CommandOptions, name: string) {
   return { scope }
 }
 
-export async function diffConfigs(options: CommandOptions) {
+// The manifest a diff or sync works from: agentcfg.json, or with --from,
+// the servers in that agent's own file.
+async function loadSource(options: CommandOptions) {
+  if (options.from) return agentSource(options)
   const scope = await resolveScope(options)
-  const manifest = await readManifest(scope.manifest)
-  return { scope, rows: await diffScope(scope, manifest, options) }
+  return { scope, manifest: await readManifest(scope.manifest), warnings: [] as string[] }
+}
+
+// --from: one agent's file is the source, and the other agents follow it.
+// The file can only hold what its own format holds, so every server goes to
+// every target. An agentcfg.json in scope wins, so there is never two sources.
+export async function agentSource(options: CommandOptions) {
+  const source = options.from ?? ""
+  if (!isAgent(source)) throw new Error(`Unknown agent for --from: ${source}`)
+  const format = adapter(source)
+  let scope: Scope
+  if (options.global) {
+    const manifest = globalScope(options).manifest
+    if (await fileExists(manifest)) {
+      throw new Error(
+        `${manifest} is the source for global servers. Drop --from, or remove that file to use ${source}'s instead.`
+      )
+    }
+    const file = format.globalFile(options.ctx)
+    if (!(await fileExists(file))) throw new Error(`No ${file} to use as the source.`)
+    scope = { kind: "global", label: "global", manifest: file, root: options.ctx.home }
+  } else {
+    const manifest = await findProjectManifest(options.dir, options.ctx)
+    if (manifest) {
+      throw new Error(
+        `${manifest} is this project's source. Drop --from, or remove that file to use ${source}'s instead.`
+      )
+    }
+    const found = await findUp(options.dir, options.ctx, (dir) => format.projectFile(dir))
+    if (!found) {
+      throw new Error(
+        `No ${relative(options.dir, format.projectFile(options.dir))} in ${options.dir} or its parents.`
+      )
+    }
+    scope = { kind: "project", label: basename(found.root), manifest: found.file, root: found.root }
+  }
+
+  const targets = options.agents?.length
+    ? checkAgents(options.agents)
+    : DEFAULT_AGENTS.filter((agent) => agent !== source)
+  if (targets.includes(source)) {
+    throw new Error(`${source} is the source; leave it out of --agent.`)
+  }
+  const warnings: string[] = []
+  const servers: ServerMap = {}
+  for (const [name, server] of Object.entries(await format.read(scope.manifest))) {
+    if (isManagedServer(server)) {
+      warnings.push(`${source}: left out ${name}, which the agent app manages`)
+      continue
+    }
+    const secrets = secretFields(server)
+    if (secrets.length) {
+      warnings.push(
+        `${source}: left out ${name}, which has a literal secret in ${secrets.join(", ")}. Write it as \${NAME} to share it.`
+      )
+      continue
+    }
+    servers[name] = server
+  }
+  const manifest: Manifest = { version: 1, agents: targets, servers }
+  return { scope, manifest, warnings, source }
+}
+
+export async function diffConfigs(options: CommandOptions) {
+  const { scope, manifest, warnings } = await loadSource(options)
+  return { scope, rows: await diffScope(scope, manifest, options), warnings }
 }
 
 export async function syncConfigs(options: CommandOptions) {
-  const scope = await resolveScope(options)
-  const manifest = await readManifest(scope.manifest)
+  const { scope, manifest, warnings } = await loadSource(options)
   const rows = await diffScope(scope, manifest, options)
-  if (options.dryRun) return { scope, rows, wrote: [], removed: [], backup: null }
+  if (options.dryRun) return { scope, rows, wrote: [], removed: [], backup: null, warnings }
 
   const backup = new Backup(locations(options.ctx).stateDir)
   const wrote: string[] = []
@@ -224,7 +292,7 @@ export async function syncConfigs(options: CommandOptions) {
     if (result.changed) wrote.push(file)
     removed.push(...result.removed.map((name) => `${agent} ${name}`))
   }
-  return { scope, rows, wrote, removed, backup: backup.saved.length ? backup : null }
+  return { scope, rows, wrote, removed, backup: backup.saved.length ? backup : null, warnings }
 }
 
 async function collect(

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.0
+
+- `sync`, `diff`, and `status` take `--from AGENT` to use that agent's own file as the source, with no `agentcfg.json`: `agentcfg sync --from claude` copies `.mcp.json` to Cursor and Codex, translating variables for each. Servers with literal secrets or managed by the Codex app stay out, and an `agentcfg.json` in scope is still the source.
+
 ## 0.3.0
 
 - `scan` lists skills: every skill folder each agent reads, user and project, the skills of active plugins, and the ones agents ship with. It flags a skill an agent loads twice from different folders, and the skills an agent cannot see, with what fixes it.
