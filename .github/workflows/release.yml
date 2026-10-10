@@ -22,11 +22,15 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          cache: true
-          install: false
-      - run: pnpm install --frozen-lockfile
+          bun-version-file: package.json
+      # Also the npm that publishes: the runner's own npm (10.x) cannot do
+      # trusted publishing.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: package.json
+      - run: bun install --frozen-lockfile
 
       - name: Check the tag matches package.json
         run: |
@@ -36,17 +40,13 @@ jobs:
             exit 1
           fi
 
-      - run: pnpm check
+      - run: bun run check
       # Built before npm reads package.json, so it finds the bin file.
-      - run: pnpm build
+      - run: bun run build
 
-      # pnpm/setup gives pnpm its Node but leaves the runner's own npm on PATH,
-      # and that npm (10.x) cannot do trusted publishing. npm 11.5.1 or newer
-      # exchanges the workflow's OIDC token and attaches provenance on its own.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.19.0
-
+      # npm 11.5.1 or newer exchanges the workflow's OIDC token and attaches
+      # provenance on its own. It comes with the Node set up above, so a Node
+      # pin with an older npm fails here rather than at publish.
       - name: Check npm supports trusted publishing
         run: |
           npm --version

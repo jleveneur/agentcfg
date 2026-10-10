@@ -21,19 +21,21 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Installs pnpm (from `packageManager`) and Node (from
-      # `devEngines.runtime`), and caches the store.
-      - uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+      # Bun installs and runs scripts (version from `packageManager`); the
+      # scripts, tests, and CLI run on Node (version from `devEngines.runtime`).
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          cache: true
-          install: false
+          bun-version-file: package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: package.json
 
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm format:check
-      - run: pnpm lint
-      - run: pnpm typecheck
-      - run: pnpm test:unit
-      - run: pnpm build
+      - run: bun install --frozen-lockfile
+      - run: bun run format:check
+      - run: bun run lint
+      - run: bun run typecheck
+      - run: bun run test:unit
+      - run: bun run build
 
       # Pull requests are squash-merged, so the title becomes the commit
       # message and has to satisfy commitlint.
@@ -41,7 +43,7 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           TITLE: ${{ github.event.pull_request.title }}
-        run: echo "$TITLE" | pnpm exec commitlint
+        run: echo "$TITLE" | bunx commitlint
 
   test:
     name: Test (${{ matrix.os }})
@@ -54,12 +56,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          cache: true
-          install: false
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test:unit
+          bun-version-file: package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - run: bun run test:unit
 
   package:
     name: Package on Node 22
@@ -68,14 +72,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          cache: true
-          install: false
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm pack --pack-destination "$RUNNER_TEMP"
+          bun-version-file: package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: package.json
+      - run: bun install --frozen-lockfile
+      # The tarball `npm publish` would upload, packed the same way.
+      - run: npm pack --pack-destination "$RUNNER_TEMP"
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.13.0
 
