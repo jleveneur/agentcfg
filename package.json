@@ -50,9 +50,9 @@
     "test": "node --test test/*.test.ts",
     "test:unit": "node --test test/agentcfg.test.ts test/scan.test.ts test/skills.test.ts test/status.test.ts",
     "test:live": "node --test test/live.test.ts",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:unit",
+    "check": "bun run format:check && bun run lint && bun run typecheck && bun run test:unit",
     "prepare": "node scripts/install-hooks.ts",
-    "prepack": "pnpm build"
+    "prepack": "bun run build"
   },
   "dependencies": {
     "smol-toml": "1.9.0"
@@ -72,11 +72,12 @@
     "runtime": {
       "name": "node",
       "version": "24.19.0",
-      "onFail": "download"
+      "onFail": "error"
     }
   },
   "engines": {
     "node": ">=22.13"
   },
-  "packageManager": "pnpm@12.3.0"
+  "packageManager": "bun@1.4.2",
+  "trustedDependencies": []
 }

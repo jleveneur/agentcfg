@@ -31,7 +31,6 @@
   "minimumReleaseAge": "3 days",
 
   "prConcurrentLimit": 8,
-  "postUpdateOptions": ["pnpmDedupe"],
 
   "automerge": true,
   "automergeType": "pr",
@@ -51,9 +50,8 @@
   "packageRules": [
     {
       // engines is a floor, not a selection. The global "pin" strategy would
-      // rewrite ">=24.0.0" to the newest published Node, contradicting
-      // devEngines.runtime and packageManager and failing every job with
-      // ERR_PNPM_UNSUPPORTED_ENGINE.
+      // rewrite ">=22.13" to the newest published Node, and every user on an
+      // older one would be told the package does not support their Node.
       "matchDepTypes": ["engines"],
       "rangeStrategy": "replace"
     },

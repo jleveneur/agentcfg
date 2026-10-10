@@ -6,27 +6,25 @@ pre-commit:
   jobs:
     - name: format
       glob: "*.{ts,js,mjs,json,jsonc,md,yaml,yml}"
-      exclude:
-        - "pnpm-lock.yaml"
-      run: pnpm exec oxfmt {staged_files}
+      run: bunx oxfmt {staged_files}
       stage_fixed: true
 
     - name: lint
       glob: "*.{ts,js,mjs}"
       # Syntax-only here. Type-aware lint needs the whole program and runs in
-      # `pnpm check` and CI.
-      run: pnpm exec oxlint {staged_files}
+      # `bun run check` and CI.
+      run: bunx oxlint {staged_files}
 
 commit-msg:
   jobs:
     - name: commitlint
-      run: pnpm exec commitlint --edit {1}
+      run: bunx commitlint --edit {1}
 
 pre-push:
   parallel: true
   jobs:
     - name: typecheck
-      run: pnpm typecheck
+      run: bun run typecheck
 
     - name: test
-      run: pnpm test:unit
+      run: bun run test:unit

@@ -166,13 +166,15 @@ Plugins and claude.ai connectors are not written by `sync`; `scan` and `status` 
 
 ## Development
 
-The source is TypeScript that Node runs directly, so tests need no build step. Use pnpm.
+The source is TypeScript that Node runs directly, so tests need no build step. Bun installs dependencies and runs the scripts; the code, tests, and CLI run on Node 24.
 
 ```bash
-pnpm install
-pnpm check          # format, lint, typecheck, unit tests
-pnpm test:live      # needs the claude, codex, and cursor-agent CLIs
+bun install
+bun run check       # format, lint, typecheck, unit tests
+bun run test:live   # needs the claude, codex, and cursor-agent CLIs
 node src/bin.ts scan
 ```
+
+`bun install` sets up the Git hooks through the `prepare` script. No dependency is trusted to run install scripts: `trustedDependencies` is empty in `package.json`, which also leaves out lefthook, on Bun's default list.
 
 Releases go out from GitHub Actions: `npm version minor`, then `git push --follow-tags`. The tag triggers the release workflow, which publishes to npm with trusted publishing and creates the GitHub release.

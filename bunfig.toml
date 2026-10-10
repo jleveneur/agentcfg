@@ -1,0 +1,6 @@
+[install]
+# Supply-chain delay: most malicious releases are found and yanked within a
+# day or two, so `bun add`, `bun update`, and lockfile maintenance resolve only
+# versions published at least a day ago, transitive dependencies included.
+# Renovate waits longer before it proposes a direct update (renovate.json).
+minimumReleaseAge = 86400 # seconds

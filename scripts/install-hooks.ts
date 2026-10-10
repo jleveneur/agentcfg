@@ -5,9 +5,12 @@
  * trivia before it costs a CI cycle; CI is the actual gate. So a machine that
  * cannot install hooks — CI containers, sandboxes, restricted `.git` permissions,
  * a starter downloaded as a ZIP with no `.git` at all — must still be able to
- * run `pnpm install`.
+ * run `bun install`.
  *
- * Run automatically by the root `prepare` script.
+ * Run automatically by the root `prepare` script. lefthook's own postinstall
+ * would install the hooks too, but only by trusting a dependency to run code
+ * at install time. `trustedDependencies` is empty in package.json, so Bun
+ * trusts none.
  */
 
 import { spawnSync } from "node:child_process"
@@ -45,8 +48,8 @@ console.warn(
     "",
     `⚠ Could not install Git hooks: ${detail ?? "unknown error"}`,
     "",
-    "  Continuing anyway — hooks are a convenience, not a gate. Run `pnpm check`",
-    "  before pushing, or `pnpm exec lefthook install` once the cause is fixed.",
+    "  Continuing anyway — hooks are a convenience, not a gate. Run `bun run check`",
+    "  before pushing, or `bunx lefthook install` once the cause is fixed.",
     ""
   ].join("\n")
 )
