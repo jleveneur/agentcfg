@@ -1,5 +1,8 @@
 # agentcfg
 
+> [!IMPORTANT]
+> This repository is archived. agentcfg is developed in [`packages/agentcfg`](https://github.com/jleveneur/jleveneur/tree/main/packages/agentcfg) of the jleveneur monorepo, and still published to npm as `@jleveneur/agentcfg`.
+
 One MCP config for Cursor, Claude Code, Codex, VS Code, and Gemini CLI, plus a scan that finds every MCP server on the machine.
 
 ```bash
